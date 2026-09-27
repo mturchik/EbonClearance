@@ -527,6 +527,16 @@ do
           wiredCombat == true,
           "combat exit is the cheap, periodic dirty-check tick for post-extraction state")
 
+    check("PLAYER_REGEN_DISABLED registered for post-combat Scavenger restore",
+          src:find('RegisterEvent%("PLAYER_REGEN_DISABLED"%)') ~= nil
+              and src:find('event == "PLAYER_REGEN_DISABLED"') ~= nil
+              and src:find("pendingScavengerAfterCombat") ~= nil,
+          "combat enter queues a Scavenger restore; combat exit drains it via EC_EnsureScavengerOut")
+    check("EC_AbortCompanionCycle stops mid-merchant scavenger swap on disable",
+          src:find("local function EC_AbortCompanionCycle%(") ~= nil
+              and src:find("if not DB%.enabled then\n%s*EC_AbortCompanionCycle%(") ~= nil,
+          "flipping Enable off mid scav->merchant->scav must abort pending goblin timers and vendor worker")
+
     -- The 120 ms BAG_UPDATE debounce frame must also call it.
     local frameStart = src:find('bagUpdateFrame:SetScript%("OnUpdate"', 1)
     local frameBody

@@ -1,0 +1,21 @@
+---
+description: Lua patterns when editing EbonClearance source
+globs: EbonClearance_*.lua
+alwaysApply: false
+---
+
+# Lua editing
+
+- `local NS = select(2, ...)` at file top. Cross-file state goes on `NS`. New functions are `local` and `EC_`-prefixed. Lua 5.1 allows 200 main-chunk locals; overflow goes on `EC_compCache` or `NS`, not a new global.
+- Forward-declare locals a later function must capture. A helper used before its `local` declaration becomes a nil global.
+- Chat goes through `PrintNice` / `PrintNicef`. Loot-cycle state uses `STATE.*`, never raw strings.
+- Cache hot WoW API globals as file-top locals. Bag scans and OnUpdate must not run a full scan every frame. `wipe(t)` when other code holds the table.
+- `EC_Delay` instead of `C_Timer.After`. Delay callbacks must surface errors via `geterrorhandler`.
+- Item links: `link:match("|Hitem:(%d+)")` only. `GetContainerItemInfo` returns `texture, itemCount, locked, quality, readable, lootable, itemLink`.
+- `GetItemInfo` is nil until a hidden tooltip hyperlink warms the cache.
+- Panel widgets that snapshot width use `EC_compCache.setPanelWidth` or `registerWidth`. List boxes anchor TOPLEFT and BOTTOMRIGHT. Panels stay idempotent via `self.inited`.
+- List writes (`whitelist`, `blacklist`, `deleteList`, account allow tables) call `EC_RefreshSellBorders()` after the write.
+- Tooltip and sell-info logic keys off English reason tokens, not the localized label. If the decision core changes, update the matching narration so the drift sentinel stays quiet.
+- Realm-wide traffic uses `NS.RealmComms`. Guild and group traffic uses `NS.Comms` with prefix `ECLR1`. Do not add chunking or `RegisterAddonMessagePrefix`. Custom chat links replace `SetItemRef`; a post-hook cannot stop the stock unknown-link error.
+- `PLAYER_ENTERING_WORLD` fires on every zone change. Guard one-time work with a flag.
+- Vendor interval floor stays 0.05s. Do not lower `DB.vendorInterval` bounds.

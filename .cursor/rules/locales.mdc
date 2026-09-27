@@ -1,0 +1,16 @@
+---
+description: Translation rules for EbonClearance locale files
+globs: EbonClearance_Locale*.lua
+alwaysApply: false
+---
+
+# Locales
+
+English text is the lookup key. Edit only the right-hand value. See `docs/TRANSLATING.md`.
+
+- Same placeholders, same count, same type, in the same left-to-right order. Do not renumber with `%1$s`.
+- Copy `|cff......` ... `|r` color codes verbatim and keep them balanced.
+- Empty `""` falls back to English. A partial file is valid.
+- No U+2014. `\n\n` breaks may move to where the translation's paragraphs fall. Do not edit the key to match.
+- A new `L["..."]` in addon code needs a slot in both `frFR` and `deDE`. New languages copy the French file, call `NS.RegisterLocale` with the new code, and are listed in `EbonClearance.toc` immediately after the other locale lines.
+- Check with `lua tests/test_locale_integrity.lua` and `lua tests/test_locale_coverage.lua`.

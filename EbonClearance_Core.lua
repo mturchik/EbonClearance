@@ -345,6 +345,9 @@ local EC_compCache = {
     -- gates a one-shot "[EC] Deferred N container(s) until out of combat."
     -- chat line per combat instance and is cleared on PLAYER_REGEN_ENABLED.
     combatDeferredAnnounced = false,
+    -- Queued by PLAYER_REGEN_DISABLED when Enable + Summon Greedy are on.
+    -- PLAYER_REGEN_ENABLED drains it (CallCompanion is blocked in combat).
+    pendingScavengerAfterCombat = false,
 }
 -- Mirror the junk-drawer table onto the addon namespace. Same table; both
 -- names alias the same memory. EbonClearance_Events.lua re-binds this as its own

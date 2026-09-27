@@ -1,0 +1,25 @@
+---
+description: EbonClearance working agreement for WoW 3.3.5a
+alwaysApply: true
+---
+
+# EbonClearance
+
+WoW 3.3.5a addon (Interface 30300, Lua 5.1) for Project Ebonhold. No external libraries. Read `docs/ARCHITECTURE.md` for the file map, then `CLAUDE.md` and `docs/ADDON_GUIDE.md` before changing behaviour. `docs/plans/` and `docs/specs/` are historical; do not implement them unless asked. `docs/CODE_REVIEW.md` is a deferred backlog: cite items, do not redo them.
+
+## Do not break
+
+- Do not bump `## Interface` off 30300. Do not use retail APIs (`C_Timer`, `C_Container`, `RegisterAddonMessagePrefix`, `GROUP_ROSTER_UPDATE`, `//`, `goto`, `bit32`).
+- Preserve LICENSE attribution: `## Author:`, provenance globals (`EBONCLEARANCE_*`, `__EbonClearance_*`), the main-panel byline, and the fingerprint salt. Do not clean these up.
+- Before deleting or simplifying code that looks dead, grep `EC-TRAP:` and follow the marker. Never remove an `EC-TRAP:` line in a cleanup.
+- New artefacts must not name other addons. Existing mentions in `NOTICE.md` and older comments stay.
+- No U+2014, and no U+2013 outside numeric ranges. Player-facing text is short and plain, wrapped as `L["English text"]`.
+- SavedVariables change only through `EnsureDB` / `EnsureAccountDB` nil-defaults. Per-character fields go in `PER_CHAR_FIELDS`. Do not assign the DB proxy back onto `EbonClearanceDB`. The settings-profile tier was removed in the feature cut (active profile flattened onto the character once).
+- Grey items with a sell price always sell. Every other positive sell signal must gate on `not junkOnly`. New sell or delete behaviour lands with a fixture in `tests/test_decision.lua`. `/ec paircheck` proc-text suggestions are display-only and must never enter the sell path.
+- Functional PE gates use `EC_compCache.peFeaturesActive()`. UI hiding uses `peFeaturesVisible()`. Never gate `InterfaceOptions_AddCategory` on either.
+- One event frame, in `Events.lua`. New files must be listed in `EbonClearance.toc`.
+- Version strings in the toc and `ADDON_VERSION` are rewritten by the release workflow. Do not hand-bump them. Add the CHANGELOG stanza before tagging, then `git pull --rebase` after the bot commit.
+
+## Verify
+
+`lua tests/run_all.lua` is the suite list (9 suites after the feature cut). Also `luac -p` and `luacheck` at 0 warnings. Format with StyLua before committing. Scope: `docs/SCOPE_CUT.md`.

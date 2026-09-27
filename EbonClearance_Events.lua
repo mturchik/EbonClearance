@@ -2782,6 +2782,9 @@ local function EC_SummonGreedyWithDelay()
     if not DB or not DB.summonGreedy then
         return
     end
+    if not EC_IsAddonEnabledForChar() then
+        return
+    end
     -- Settings cut: fixed summon delay (slider removed).
     EC_Delay(1.6, SummonGreedyScavenger)
 end
@@ -5138,6 +5141,62 @@ local function EC_refusalKey(bag, slot) return bag * 100 + slot end
 local worker = CreateFrame("Frame")
 worker:Hide()
 
+-- Stop the scavenger <-> Goblin Merchant <-> scavenger auto-loot cycle
+-- and any in-flight vendor worker. Used when the player flips Enable
+-- off mid-cycle so FinishRun / delayed callbacks cannot keep swapping
+-- companions after disable. Does not summon or dismiss pets.
+local function EC_AbortCompanionCycle()
+    EC_summonGoblinPending = false
+    EC_summonGoblinTimer = 0
+    EC_targetGoblinPending = false
+    EC_targetGoblinTimer = 0
+    EC_goblinRetryCount = 0
+    EC_merchantReminderPending = false
+    EC_merchantReminderTimer = 0
+    EC_compCache.bagFullSince = nil
+    EC_compCache.pendingAnnounce = false
+    EC_compCache.pendingScavengerAfterCombat = false
+    EC_compCache.vendorRunning = false
+    EC_compCache.pendingDelete = nil
+    worker:Hide()
+    EC_compCache.lootCycleState = STATE.IDLE
+    -- Clear so EC_TryResummonScavenger / mount-restore / FinishRun do not
+    -- bring the Scavenger back after the player turned the addon off
+    -- mid-merchant. Refusal marks stay until the next StartRun /
+    -- MERCHANT_CLOSED wipe (Test 100b pins those two sites).
+    EC_compCache.addonDismissed = false
+end
+
+-- Summon the Scavenger when Enable + Summon Greedy are on, unless the
+-- player is mounted, a recent manual portrait dismiss is still in the
+-- grace window, or the auto-loot scav<->merchant cycle is mid-flight.
+local function EC_EnsureScavengerOut()
+    if not DB or not DB.summonGreedy then
+        return
+    end
+    if not EC_IsAddonEnabledForChar() then
+        return
+    end
+    if IsMounted and IsMounted() then
+        return
+    end
+    if GetTime() < (EC_compCache.userUntil or 0) then
+        return
+    end
+    if EC_compCache.vendorRunning then
+        return
+    end
+    local st = EC_compCache.lootCycleState
+    if st == STATE.WAITING_MERCHANT or st == STATE.SELLING then
+        return
+    end
+    local _, scavOut = EC_FindGreedyScavenger()
+    if scavOut then
+        return
+    end
+    EC_SummonGreedyWithDelay()
+end
+
 -- v2.13.0 quest-item safety net. Returns true iff GetItemInfo classifies
 -- the item as itemClass "Quest". Used by EC_IsSellable and BuildQueue's
 -- delete branch to refuse auto-vendor / auto-delete on quest items even
@@ -5838,6 +5897,11 @@ local function FinishRun()
             if not MerchantFrame or not MerchantFrame:IsShown() then
                 return
             end
+            -- Player may have disabled mid-cycle while this delay was armed.
+            if not EC_IsAddonEnabledForChar() then
+                EC_AbortCompanionCycle()
+                return
+            end
             local merchantAllowed = EC_IsMerchantAllowed()
             BuildQueue(not merchantAllowed)
             if #queue > 0 then
@@ -5877,8 +5941,12 @@ local function FinishRun()
         EC_compCache.lootCycleState = STATE.IDLE
     end
     -- v2.14.0: see comment at the corresponding call above.
-    EC_compCache.pendingAnnounce = true
-    EC_SummonGreedyWithDelay()
+    if EC_IsAddonEnabledForChar() then
+        EC_compCache.pendingAnnounce = true
+        EC_SummonGreedyWithDelay()
+    else
+        EC_AbortCompanionCycle()
+    end
 end
 
 local function DoNextAction()
@@ -5891,6 +5959,10 @@ local function DoNextAction()
     -- the post-finish iterations. Belt-and-braces with the batch loop's
     -- own break below.
     if not EC_compCache.vendorRunning then
+        return
+    end
+    if not EC_IsAddonEnabledForChar() then
+        EC_AbortCompanionCycle()
         return
     end
     if not MerchantFrame or not MerchantFrame:IsShown() then
@@ -6527,6 +6599,11 @@ function EbonClearance_ToggleEnabled()
     DB.enabled = not DB.enabled
     PrintNicef(L["Now %s."], DB.enabled and L["|cff00ff00enabled|r"] or L["|cffff4444disabled|r"])
     PlaySound(DB.enabled and "igMainMenuOptionCheckBoxOn" or "igMainMenuOptionCheckBoxOff")
+    -- Stopping mid scav->merchant->scav cycle: FinishRun and delayed
+    -- callbacks must not keep swapping companions after disable.
+    if not DB.enabled then
+        EC_AbortCompanionCycle()
+    end
     -- v2.39.1: single source of truth for the master Enable state.
     -- The helper now refreshes every UI surface that mirrors
     -- DB.enabled so a flip via ANY entry point (minimap right-click,
@@ -7501,8 +7578,10 @@ f:RegisterEvent("EQUIPMENT_SETS_CHANGED")
 -- Both handlers re-scan and rebuild the description map.
 f:RegisterEvent("LEARNED_SPELL_IN_TAB")
 f:RegisterEvent("SPELLS_CHANGED")
--- Wakes combat-deferred settings-panel opens and a cheap extraction refresh.
+-- Wakes combat-deferred settings-panel opens, cheap extraction refresh,
+-- and the post-combat Scavenger restore (CallCompanion is blocked in combat).
 f:RegisterEvent("PLAYER_REGEN_ENABLED")
+f:RegisterEvent("PLAYER_REGEN_DISABLED")
 
 f:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -7616,12 +7695,22 @@ f:SetScript("OnEvent", function(self, event, ...)
         if wasBootstrapped
             and DB
             and DB.summonGreedy
+            and EC_IsAddonEnabledForChar()
             and EC_compCache.lastScavengerOut
         then
             -- Settings cut: restore after load is always on (checkbox removed).
             local _, scavOut = EC_FindGreedyScavenger()
             if not scavOut then
                 EC_SummonGreedyWithDelay()
+            end
+        end
+        -- Entering a dungeon / raid instance: ensure the Scavenger is out
+        -- when Enable + Summon Greedy are on (CallCompanion lands after
+        -- the load screen via the same delay helper).
+        if wasBootstrapped and DB and event == "PLAYER_ENTERING_WORLD" then
+            local inInstance, instanceType = IsInInstance()
+            if inInstance and (instanceType == "party" or instanceType == "raid") then
+                EC_EnsureScavengerOut()
             end
         end
         -- v2.51.0: watch-list toggle snapshot at PLAYER_LOGIN, after
@@ -7648,6 +7737,13 @@ f:SetScript("OnEvent", function(self, event, ...)
                 NS.PrimeDeleteListItemCache()
             end
         end
+    elseif event == "PLAYER_REGEN_DISABLED" then
+        -- CallCompanion is blocked in combat. Queue a restore so exit
+        -- combat brings the Scavenger back when Enable + Summon Greedy
+        -- are on.
+        if DB and DB.summonGreedy and EC_IsAddonEnabledForChar() then
+            EC_compCache.pendingScavengerAfterCombat = true
+        end
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Drain any settings-panel open that was queued while combat was
         -- active. Same double-call workaround as the original click paths.
@@ -7661,6 +7757,15 @@ f:SetScript("OnEvent", function(self, event, ...)
         -- Cheap dirty-check refresh of the known-extraction description map.
         if EC_compCache.refreshExtractionIfDirty then
             EC_compCache.refreshExtractionIfDirty()
+        end
+        -- Post-combat Scavenger restore (enter-combat queues the flag;
+        -- exit always tries when Enable + Summon Greedy are on so a
+        -- summon that bounced off InCombatLockdown still recovers).
+        if EC_compCache.pendingScavengerAfterCombat
+            or (DB and DB.summonGreedy and EC_IsAddonEnabledForChar())
+        then
+            EC_compCache.pendingScavengerAfterCombat = false
+            EC_EnsureScavengerOut()
         end
     elseif event == "EQUIPMENT_SETS_CHANGED" then
         EC_StampEvent("equipmentSetsChanged")
@@ -7817,11 +7922,11 @@ f:SetScript("OnEvent", function(self, event, ...)
         -- when the addon is disabled for this character so manual sells at a
         -- merchant the user opened by hand are still tracked.
         EC_manualSell.snapshotBags()
-        if DB and DB.autoLootCycle then
-            EC_compCache.lootCycleState = STATE.SELLING
-        end
         if not EC_IsAddonEnabledForChar() then
             return
+        end
+        if DB and DB.autoLootCycle then
+            EC_compCache.lootCycleState = STATE.SELLING
         end
         NS.InstallGreedyMuteOnce()
         StartRun()

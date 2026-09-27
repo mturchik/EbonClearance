@@ -40,7 +40,7 @@ Alt+right-click on a bag item stays. The item tooltip still says whether the ite
 | Grey items with a vendor price always sell | No checkbox. EC-TRAP. |
 | Quest items, locked slots, and equipped items are never sold or deleted | No checkbox. |
 | Keep items in your saved equipment sets | Always on. |
-| Only summon the Greedy Scavenger when out of combat | Always on. |
+| Only summon the Greedy Scavenger when out of combat | Always on. Re-summons on combat exit (queued on combat enter) and when entering a dungeon/raid instance, when Enable + Summon Greedy are on. |
 | Re-summon the Greedy Scavenger after a loading screen if it was out | Always on. |
 | A fixed pause between sells | Safe fixed pace. |
 | Items on the Delete List are destroyed | List membership is enough. |
