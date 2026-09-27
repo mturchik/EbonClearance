@@ -18,9 +18,9 @@ The addon is thinner. Settings that left with removed features are gone from the
 - **Disable mid-cycle:** flipping Enable off during the scavenger -> merchant -> scavenger swap aborts the cycle so the merchant step cannot keep resummoning the Scavenger.
 - **Suites:** 13 → 9 (`test_comms_version`, `test_guildshare`, `test_procshare`, `test_servershare` removed). Pure `Decision.sell` fixtures for chopped rules remain as regression pins; the live adapter does not feed those fields.
 
-No hand version bump in this note - the release workflow rewrites the toc and `ADDON_VERSION` on tag.
-
 ---
+
+### v2.77.1
 
 **Fix: affix matching now recognises items whose suffix differs from the spell that grants the affix.**
 
