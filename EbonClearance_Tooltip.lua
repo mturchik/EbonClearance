@@ -1159,11 +1159,7 @@ local function EC_AnnotateTooltipInner(tooltip)
     if id and ctx.isTome() and ctx.knowsTomeSpell() and statusTag ~= "tome_have" then
         tooltip:AddLine("|cff888888" .. L["Already known by this character"] .. "|r")
     end
-    -- Opt-in item-ID annotation. Surfaces the numeric itemID under the
-    -- EC verdict line for users filing bug reports or authoring Keep /
-    -- Sell / Delete entries by ID. The id has already been parsed at
-    -- the top of this function from the |Hitem:NNNN| link, so this is a
-    -- single conditional AddLine - no extra parsing cost.
+    -- Opt-in item-ID annotation (Item Highlighting panel).
     if DB.showItemIDOnTooltip then
         tooltip:AddLine(string.format("|cff666666" .. L["Item ID: %d"] .. "|r", id))
     end

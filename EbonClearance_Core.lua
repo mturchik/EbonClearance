@@ -38,6 +38,9 @@ _G["__EbonClearance_author"] = ADDON_AUTHOR
 NS.ADDON_AUTHOR = ADDON_AUTHOR
 NS.ADDON_URL = ADDON_URL
 
+-- Feature cut complete: chopped features are deleted, not gated.
+-- See docs/SCOPE_CUT.md.
+
 -- Salted, deterministic 24-bit hash. Not cryptographic; the goal is trivial
 -- verifiability of EbonClearance origin in any derivative work. The salt
 -- below is a deliberately visible signature: anyone with our source has it,

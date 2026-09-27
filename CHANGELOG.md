@@ -5,7 +5,20 @@ Detailed per-release notes for [EbonClearance](README.md). For the user-level ov
 ---
 
 
-### v2.77.1
+### v2.78.0
+
+**Scope cut: companion loop, sell/keep/delete decisions, and the four lists.**
+
+The addon is thinner. Settings that left with removed features are gone from the UI and from the code. Behaviour that used to have a checkbox (equipment-set protection, out-of-combat summon, restore after load, fixed sell pace, Delete List destroys) stays on with no control.
+
+- **Deleted** Quickstart, Current Rules, Sold History, Loot Log, Personal/Guild/Server stats, all share transports, update alerts, conflict warning, Process Bags / Fast Loot / auto-open, list and settings profiles UI, Help, repair, keep-bags-open, bind filter, sell-known-recipes, the Item Highlighting options panel, and the extra affix/delete automation beyond Keep Settings.
+- **Kept** Enable, minimap button (right-click toggles Enable), bag listing-status borders (always on for every category, no options), merchant target, quality/iLvl rules, scavenger summon + cycle + bag threshold, the six Keep Settings toggles, the four lists, tooltip verdicts, Alt+right-click, BugReport, and Target Goblin Merchant.
+- **Settings profiles** no longer route through a third DB-proxy tier. Each character's active profile is flattened onto the character once; the old `settingsProfiles` table stays in SavedVariables for downgrade safety.
+- **Suites:** 13 → 9 (`test_comms_version`, `test_guildshare`, `test_procshare`, `test_servershare` removed). Pure `Decision.sell` fixtures for chopped rules remain as regression pins; the live adapter does not feed those fields.
+
+No hand version bump in this note - the release workflow rewrites the toc and `ADDON_VERSION` on tag.
+
+---
 
 **Fix: affix matching now recognises items whose suffix differs from the spell that grants the affix.**
 

@@ -147,16 +147,12 @@ check(
     "EC_compCache.peFeaturesVisible() must short-circuit to false on simulateExtractionAbsent and otherwise return peFeaturesActive()."
 )
 
--- 8. (v2.74.0) Every panel that owns a PE-only widget consults the gate, so a
--- new affix setting can't ship visible-on-every-realm by omission.
+-- 8. (v2.74.0) Every remaining panel that owns a PE-only widget consults
+-- the gate. Feature-cut panels (Item Highlighting, Guild, Quickstart, Help)
+-- are gone; pin only what still ships.
 local PE_PANELS = {
     "EbonClearance_ProtectionPanel.lua",
     "EbonClearance_KeepDeletePanels.lua",
-    "EbonClearance_ItemHighlightingPanel.lua",
-    "EbonClearance_GuildPanel.lua",
-    "EbonClearance_QuickstartPanel.lua",
-    "EbonClearance_MainPanel.lua",
-    "EbonClearance_HelpPanel.lua",
     "EbonClearance_MerchantPanel.lua", -- the Goblin/normal/all "Sell at" dropdown
     "EbonClearance_ScavengerPanel.lua", -- the whole companion panel
 }
@@ -171,51 +167,6 @@ check(
     #missingGate == 0,
     "These panels own PE-only widgets but never gate them: " .. table.concat(missingGate, ", ")
 )
-
--- 8b. (v2.76.0) The presence check above is per-FILE, so one gated question
--- satisfies it for the whole Quickstart - which is exactly how Q2 / Q6 / Q12
--- shipped ungated while Q8 was gated (Serv report). Pin the individual
--- companion questions.
---
--- The signal is indentation: a gated makeRadioGroup sits inside an
--- `if ... peFeaturesVisible() then` block, so stylua indents it 12 spaces,
--- while an ungated one at the builder's top level sits at 8. Q1 and Q9 are
--- the deliberate controls - both must STAY at 8, because vendor speed and
--- tome/recipe protection work on any realm. (Q9 especially: v2.74.0 keeps the
--- tome checkboxes visible off-PE, re-anchoring rather than hiding them, so
--- profession recipes stay protectable on a plain 3.3.5a server.)
-do
-    local qs = read("EbonClearance_QuickstartPanel.lua")
-    local function indentOf(label)
-        for line in qs:gmatch("[^\n]+") do
-            if line:find(label, 1, true) then
-                return #(line:match("^(%s*)") or "")
-            end
-        end
-        return nil
-    end
-    local gated = { ["Q2. Auto-loot cycle?"] = true, ["Q6. Which merchants"] = true, ["Q12. Auto-summon"] = true }
-    local ungated = { ["Q1. How fast"] = true, ["Q9. Tome / recipe"] = true }
-    local bad = {}
-    for label in pairs(gated) do
-        local ind = indentOf(label)
-        if ind == nil or ind < 12 then
-            bad[#bad + 1] = label .. " (expected gated, indent " .. tostring(ind) .. ")"
-        end
-    end
-    for label in pairs(ungated) do
-        local ind = indentOf(label)
-        if ind == nil or ind >= 12 then
-            bad[#bad + 1] = label .. " (expected UNgated, indent " .. tostring(ind) .. ")"
-        end
-    end
-    check(
-        "Quickstart gates the Scavenger/Goblin questions and leaves the realm-agnostic ones alone",
-        #bad == 0,
-        "v2.76.0: Q2 (auto-loot cycle -> DB.autoLootCycle), Q6 (merchant target) and Q12 (summon Goblin Merchant) all describe Project Ebonhold companions and MUST be inside a peFeaturesVisible branch - their own settings panels are already hidden off-PE, so asking here promised features the settings then denied. Q1 (vendor speed) and Q9 (tome / recipe protection) MUST NOT be gated: both work on any 3.3.5a realm, and the tome controls specifically stay visible off-PE. Offenders: "
-            .. table.concat(bad, ", ")
-    )
-end
 
 -- 9. (v2.74.0) Hiding a setting is not enough when the setting defaults ON
 -- and the thing that would switch it off is now invisible. Two toggles are in
@@ -237,31 +188,16 @@ check(
 )
 
 -- 10. (v2.74.0) The two stock looting toggles must NOT live on the companion
--- panel, which goes dark on a realm without the pets. They are plain 3.3.5a
--- looting behaviour and moved to the bag-utility panel; putting them back
--- would silently remove them from every non-companion realm.
+-- panel. Feature cut removed Process Bags (and those toggles with it); pin
+-- that they stay off Scavenger.
 check(
     "stock looting toggles are off the companion panel",
     read("EbonClearance_ScavengerPanel.lua"):find("EbonClearanceAutoOpenCB", 1, true) == nil
-        and read("EbonClearance_ScavengerPanel.lua"):find("EbonClearanceFastLootCB", 1, true) == nil
-        and read("EbonClearance_ProcessBagsPanel.lua"):find("EbonClearanceAutoOpenCB", 1, true) ~= nil
-        and read("EbonClearance_ProcessBagsPanel.lua"):find("EbonClearanceFastLootCB", 1, true) ~= nil,
-    "Auto-open containers and Fast Loot belong on the Process Bags panel, not the Scavenger panel."
+        and read("EbonClearance_ScavengerPanel.lua"):find("EbonClearanceFastLootCB", 1, true) == nil,
+    "Auto-open containers and Fast Loot must not return to the Scavenger panel."
 )
 
--- 11. (v2.74.0) The Help filter must handle whole sections, not just single
--- entries, and must not leave a section header standing over nothing. The
--- companion section is the live case: every one of its entries needs the pets,
--- so the marker carries pe = true and the header goes with them.
-check(
-    "help filter drops PE sections and never leaves an empty header",
-    read("EbonClearance_HelpPanel.lua"):find("e.section and e.pe", 1, true) ~= nil
-        and read("EbonClearance_HelpPanel.lua"):match('section = "scavenger".-pe = true') ~= nil
-        and read("EbonClearance_HelpPanel.lua"):match("if nxt and not nxt%.section then") ~= nil,
-    "EC_buildHelpEntries must honour pe = true on a section marker and drop any section left with no entries under it."
-)
-
--- 12. (v2.74.0) The dead "PE addon not detected" grey-out note is gone. The
+-- 11. (v2.74.0) The dead "PE addon not detected" grey-out note is gone. The
 -- widget it annotated is hidden outright now, so the string was unreachable;
 -- leaving it would be a second, contradictory story about the same state.
 check(

@@ -65,26 +65,12 @@ DeletePanel:SetScript("OnShow", function(self)
             L["Add items by shift-clicking them, dragging them in, or typing the item ID below."]
         )
 
-        -- Grey pointer to the sibling Delete Settings panel. Mirrors the
-        -- Keep List -> Keep Settings pointer added in v2.15.0.
-        local settingsPtr = self:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-        settingsPtr:SetPoint("TOPLEFT", delHint, "BOTTOMLEFT", 0, -6)
-        EC_compCache.setPanelWidth(settingsPtr, 16)
-        settingsPtr:SetJustifyH("LEFT")
-        settingsPtr:SetJustifyV("TOP")
-        if settingsPtr.SetWordWrap then
-            settingsPtr:SetWordWrap(true)
-        end
-        settingsPtr:SetText(
-            L["|cffaaaaaaAuto-delete, PvP Resilience marking, unsellable-affix marking, and chat announcements live on the |r|cffffb84dDelete Settings|r|cffaaaaaa panel.|r"]
-        )
-
         self.listUI = NS.CreateListUI(self, L["Delete List"], "deleteList", 16, -130)
         -- v2.11.0: anchor BOTTOMRIGHT so the list stretches with the panel
         -- on Interface Options frame resize - mirrors the Whitelist /
         -- Blacklist / Account-Whitelist setups.
         self.listUI:ClearAllPoints()
-        self.listUI:SetPoint("TOPLEFT", settingsPtr, "BOTTOMLEFT", 0, -12)
+        self.listUI:SetPoint("TOPLEFT", delHint, "BOTTOMLEFT", 0, -12)
         self.listUI:SetPoint("BOTTOMRIGHT", self, "BOTTOMRIGHT", -16, 16)
         self.listUI:Refresh()
     end)

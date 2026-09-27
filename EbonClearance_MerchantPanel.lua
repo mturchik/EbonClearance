@@ -62,34 +62,12 @@ local EC_MERCHANT_MODES = {
 MerchantPanel:SetScript("OnShow", function(self)
     local DB = NS.DB
     EC_compCache.initPanel(self, function(self)
-        if self.repairCB then
-            self.repairCB:SetChecked(DB.repairGear)
-        end
-        if self.guildRepairCB then
-            self.guildRepairCB:SetChecked(DB.repairUseGuildBank)
-        end
-        if self.keepBagsCB then
-            self.keepBagsCB:SetChecked(DB.keepBagsOpen)
-        end
-        if self.speedSlider then
-            self.speedSlider:SetValue(DB.vendorInterval or 0.1)
-        end
-        if self.fastModeCB then
-            self.fastModeCB:SetChecked(DB.fastMode)
-        end
-        if self.turboModeCB then
-            self.turboModeCB:SetChecked(DB.turboMode)
-        end
-        if self.refreshSpeedReadout then
-            self.refreshSpeedReadout()
-        end
         if self.RefreshMerchantModeDropDown then
             self:RefreshMerchantModeDropDown()
         end
         for q = 1, 4 do
             local cb = self["qualityRow" .. q .. "CB"]
             local input = self["qualityRow" .. q .. "Input"]
-            local dd = self["qualityRow" .. q .. "DD"]
             local useEqCB = self["qualityRow" .. q .. "UseEq"]
             if cb and DB.qualityRules and DB.qualityRules[q] then
                 cb:SetChecked(DB.qualityRules[q].enabled)
@@ -97,42 +75,12 @@ MerchantPanel:SetScript("OnShow", function(self)
             if input and DB.qualityRules and DB.qualityRules[q] then
                 input:SetText(tostring(DB.qualityRules[q].maxILvl or 0))
             end
-            if dd and DB.qualityRules and DB.qualityRules[q] and self._BindFilterText then
-                UIDropDownMenu_SetText(dd, self._BindFilterText(DB.qualityRules[q].bindFilter))
-            end
-            -- v2.12.0: refresh the per-rarity Use-equipped-iLvl tickbox
-            -- and the maxILvl input's enabled state. The applyInputEnabled
-            -- helper was stashed on the row's main checkbox at build time.
             if useEqCB and DB.qualityRules and DB.qualityRules[q] then
                 useEqCB:SetChecked(DB.qualityRules[q].useEquippedILvl == true)
             end
             if cb and cb._applyInputEnabled then
                 cb._applyInputEnabled()
             end
-        end
-        -- v2.49.3: re-sync the moved "Sell recipes you already know" controls.
-        if self.sellRecipesCB then
-            self.sellRecipesCB:SetChecked(DB.sellKnownRecipes)
-        end
-        if self.recipeQualityCBs then
-            for q = 1, 4 do
-                local qcb = self.recipeQualityCBs[q]
-                if qcb then
-                    qcb:SetChecked(DB.sellKnownRecipeQualities and DB.sellKnownRecipeQualities[q])
-                end
-            end
-        end
-        if self.recipeBindDDs and self._BindFilterText then
-            for q = 1, 4 do
-                local dd = self.recipeBindDDs[q]
-                if dd then
-                    local v = (DB.sellKnownRecipeBindFilter and DB.sellKnownRecipeBindFilter[q]) or "any"
-                    UIDropDownMenu_SetText(dd, self._BindFilterText(v))
-                end
-            end
-        end
-        if self.UpdateRecipeQualitiesEnabled then
-            self:UpdateRecipeQualitiesEnabled()
         end
     end, function(self, content)
         -- Build-time table population. See the EC_WHITELIST_QUALITIES
@@ -218,291 +166,16 @@ MerchantPanel:SetScript("OnShow", function(self)
             end
         end
 
-        local repairCB =
-            CreateFrame("CheckButton", "EbonClearanceRepairGearCB", content, "InterfaceOptionsCheckButtonTemplate")
-        -- Shifted up 14 px (was -110) to follow the removed grey-junk line above
-        -- the dropdown; preserves the original visual gap between dropdown and
-        -- this checkbox.
-        -- v2.74.0: absolute anchor, so it does not follow the hidden
-        -- dropdown row on its own. Pull it up into that row's slot when the
-        -- dropdown is gone, otherwise the panel opens with a dead band.
-        repairCB:SetPoint("TOPLEFT", 16, merchantModeShown and -96 or -76)
-        repairCB:SetChecked(DB.repairGear)
-        local rt = _G[repairCB:GetName() .. "Text"]
-        if rt then
-            rt:SetText(L["Repair gear while selling"])
-            -- v2.59.8: reactive width matches the shared NS.AddCheckbox
-            -- helper. v2.66.1 iter: bumped from 42 to 60 (matching the
-            -- shared helper's new default) so the [?] icon at text:RIGHT
-            -- + 6 stays inside the scrollbar zone.
-            EC_compCache.setPanelWidth(rt, 60)
-            rt:SetJustifyH("LEFT")
-            if rt.SetWordWrap then
-                rt:SetWordWrap(true)
-            end
-        end
-        repairCB:SetScript("OnClick", function()
-            DB.repairGear = repairCB:GetChecked() and true or false
-            PlaySound("igMainMenuOptionCheckBoxOn")
-        end)
-        self.repairCB = repairCB
-        if rt then
-            -- v2.66.1 iter (Serv report): right-edge-align across the
-            -- panel to match Keep Settings. Label FontString is already
-            -- reactive-wide via setPanelWidth above; anchor LEFT-to-RIGHT
-            -- puts the icon at the label's right edge (panel edge minus
-            -- inset).
-            NS.AddHelpIcon(content, rt, "LEFT", "RIGHT", 6, 0, "gate-repair")
-        end
-
-        -- Guild-bank funded repair. Indented under the master repair toggle so
-        -- the visual hierarchy reads "repair, and prefer guild bank if I can".
-        -- The runtime path falls back to personal gold whenever the bank can't
-        -- supply the full amount, so toggling this on is safe even on alts who
-        -- aren't in a guild.
-        local guildRepairCB =
-            CreateFrame("CheckButton", "EbonClearanceRepairGuildBankCB", content, "InterfaceOptionsCheckButtonTemplate")
-        guildRepairCB:SetPoint("TOPLEFT", repairCB, "BOTTOMLEFT", 22, -2)
-        guildRepairCB:SetChecked(DB.repairUseGuildBank)
-        local grt = _G[guildRepairCB:GetName() .. "Text"]
-        if grt then
-            grt:SetText(L["Pay from guild bank when possible"])
-            EC_compCache.setPanelWidth(grt, 80)
-            grt:SetJustifyH("LEFT")
-        end
-        guildRepairCB:SetScript("OnClick", function()
-            DB.repairUseGuildBank = guildRepairCB:GetChecked() and true or false
-            PlaySound("igMainMenuOptionCheckBoxOn")
-        end)
-        self.guildRepairCB = guildRepairCB
-        if grt then
-            NS.AddHelpIcon(content, grt, "LEFT", "RIGHT", 6, 0, "gate-guild-bank-repair")
-        end
-
-        local keepBagsCB =
-            CreateFrame("CheckButton", "EbonClearanceKeepBagsOpenCB", content, "InterfaceOptionsCheckButtonTemplate")
-        keepBagsCB:SetPoint("TOPLEFT", guildRepairCB, "BOTTOMLEFT", -22, -6)
-        keepBagsCB:SetChecked(DB.keepBagsOpen)
-        local kbt = _G[keepBagsCB:GetName() .. "Text"]
-        if kbt then
-            kbt:SetText(L["Keep bags open after talking to a merchant"])
-            EC_compCache.setPanelWidth(kbt, 60)
-            kbt:SetJustifyH("LEFT")
-        end
-        keepBagsCB:SetScript("OnClick", function()
-            DB.keepBagsOpen = keepBagsCB:GetChecked() and true or false
-            PlaySound("igMainMenuOptionCheckBoxOn")
-        end)
-        self.keepBagsCB = keepBagsCB
-        if kbt then
-            NS.AddHelpIcon(content, kbt, "LEFT", "RIGHT", 6, 0, "gate-keep-bags-open")
-        end
-
-        -- v2.37.7: slider label changed from "Vendoring Speed" to
-        -- "Time between sells" because the value semantic is INTERVAL
-        -- (lower = faster). The old "Speed" label invited players to
-        -- drag the slider to its maximum value thinking they were
-        -- selecting maximum speed; they were actually selecting maximum
-        -- delay between sells. A live readout below the slider now
-        -- translates the interval into items/second so the practical
-        -- effect is visible.
-        local speedSlider = NS.AddSlider(
-            content,
-            "EbonClearanceVendoringSpeedSlider",
-            keepBagsCB,
-            L["Time between sells"],
-            0.05,
-            0.500,
-            0.01,
-            function()
-                return DB.vendorInterval or 0.1
-            end,
-            function(v)
-                DB.vendorInterval = v
-            end,
-            -16
-        )
-        self.speedSlider = speedSlider
-        speedSlider:SetWidth(200)
-        -- v2.66.1 iter: anchor to the slider's label FontString (inline
-        -- with the label at the top of the slider) instead of the
-        -- slider frame's TOPRIGHT corner. Matches Keep Settings' slider
-        -- [?] pattern.
-        local speedSliderText = _G["EbonClearanceVendoringSpeedSliderText"]
-        NS.AddHelpIcon(
-            content,
-            speedSliderText or speedSlider,
-            "LEFT",
-            speedSliderText and "RIGHT" or "TOPRIGHT",
-            6,
-            0,
-            "gate-sell-speed"
-        )
-
-        -- v2.37.7: live items/sec readout. Updated whenever the slider
-        -- moves OR when Fast Mode / Turbo Mode toggles flip the
-        -- effective rate. Format matches: "About 10 sells per second"
-        -- with a parenthesised note when Fast Mode is overriding the
-        -- slider value so the user knows what's actually in effect.
-        local speedReadout = content:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-        -- Anchor below the slider's Low label rather than the track's
-        -- BOTTOMLEFT so the readout doesn't overlap the slider's
-        -- "0.050s" min/max labels (OptionsSliderTemplate positions Low /
-        -- High BELOW the track, so slider:BOTTOMLEFT is above them).
-        local lowLabel = _G[speedSlider:GetName() .. "Low"]
-        if lowLabel then
-            speedReadout:SetPoint("TOPLEFT", lowLabel, "BOTTOMLEFT", 0, -8)
-        else
-            speedReadout:SetPoint("TOPLEFT", speedSlider, "BOTTOMLEFT", 0, -20)
-        end
-        EC_compCache.setPanelWidth(speedReadout, 60)
-        speedReadout:SetJustifyH("LEFT")
-        if speedReadout.SetWordWrap then
-            speedReadout:SetWordWrap(true)
-        end
-        self.speedReadout = speedReadout
-
-        -- The readout shows the SLIDER's interpretation as the primary
-        -- number so dragging the slider always changes the visible
-        -- value, even with Fast Mode on. When Fast Mode overrides the
-        -- slider value, a secondary "(Fast Mode active: N/sec)" note
-        -- surfaces what's actually going to happen at the vendor.
-        local function refreshSpeedReadout()
-            local sliderValue = DB.vendorInterval or 0.1
-            if sliderValue < 0.05 then
-                sliderValue = 0.05
-            end
-            local batch = DB.turboMode and 4 or 1
-            local sliderRate = batch / sliderValue
-            local effectiveInterval = DB.fastMode and 0.05 or sliderValue
-            local effectiveRate = batch / effectiveInterval
-            local mainText = string.format(L["About %.0f sells per second."], sliderRate)
-            local noteText = ""
-            if DB.fastMode and math.abs(sliderRate - effectiveRate) > 0.5 then
-                noteText = string.format(L["  |cffaaaaaa(Fast Mode active: %.0f/sec)|r"], effectiveRate)
-            elseif DB.fastMode and DB.turboMode then
-                noteText = L["  |cffaaaaaa(Fast + Turbo)|r"]
-            elseif DB.fastMode then
-                noteText = L["  |cffaaaaaa(Fast Mode)|r"]
-            elseif DB.turboMode then
-                noteText = L["  |cffaaaaaa(Turbo Mode)|r"]
-            end
-            speedReadout:SetText(mainText .. noteText)
-        end
-        refreshSpeedReadout()
-        speedSlider:HookScript("OnValueChanged", refreshSpeedReadout)
-        self.refreshSpeedReadout = refreshSpeedReadout
-
-        local fastModeCB = NS.AddCheckbox(
-            content,
-            "EbonClearanceFastModeCB",
-            speedReadout,
-            L["Fast Mode (0.05 s interval, 160-item cap)"],
-            function()
-                return DB.fastMode
-            end,
-            function(v)
-                DB.fastMode = v
-                refreshSpeedReadout()
-            end,
-            -10
-        )
-        self.fastModeCB = fastModeCB
-        do
-            local fmt = _G[fastModeCB:GetName() .. "Text"]
-            if fmt then
-                NS.AddHelpIcon(content, fmt, "LEFT", "RIGHT", 6, 0, "gate-fast-mode")
-            end
-        end
-
-        local fastModeNote = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-        fastModeNote:SetPoint("TOPLEFT", fastModeCB, "BOTTOMLEFT", 26, -2)
-        EC_compCache.setPanelWidth(fastModeNote, 60)
-        fastModeNote:SetJustifyH("LEFT")
-        if fastModeNote.SetWordWrap then
-            fastModeNote:SetWordWrap(true)
-        end
-        fastModeNote:SetText(
-            L["|cff888888May cause disconnects on unstable connections - turn off if it does.|r"]
-        )
-
-        -- v2.37.7: Turbo Mode - pops multiple items per worker fire.
-        -- Stacks with Fast Mode; the live readout reflects whichever
-        -- combination is in effect. AddCheckbox anchors the new
-        -- checkbox at the previous anchor's X, but our anchor here is
-        -- fastModeNote which is indented +26 px to sit under the
-        -- fastModeCB text. Without an override the Turbo checkbox would
-        -- inherit that indent and cascade the indent to every widget
-        -- below it (Quality Threshold etc.). ClearAllPoints + manual
-        -- SetPoint snaps it back to fastModeCB's left column.
-        local turboModeCB = NS.AddCheckbox(
-            content,
-            "EbonClearanceTurboModeCB",
-            fastModeNote,
-            L["Turbo Mode (4 items per cycle - bag-clear in seconds)"],
-            function()
-                return DB.turboMode
-            end,
-            function(v)
-                DB.turboMode = v
-                refreshSpeedReadout()
-            end,
-            -10
-        )
-        turboModeCB:ClearAllPoints()
-        turboModeCB:SetPoint("TOPLEFT", fastModeNote, "BOTTOMLEFT", -26, -10)
-        self.turboModeCB = turboModeCB
-        do
-            local tmt = _G[turboModeCB:GetName() .. "Text"]
-            if tmt then
-                NS.AddHelpIcon(content, tmt, "LEFT", "RIGHT", 6, 0, "gate-turbo-mode")
-            end
-        end
-
-        local turboModeNote = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-        turboModeNote:SetPoint("TOPLEFT", turboModeCB, "BOTTOMLEFT", 26, -2)
-        EC_compCache.setPanelWidth(turboModeNote, 60)
-        turboModeNote:SetJustifyH("LEFT")
-        if turboModeNote.SetWordWrap then
-            turboModeNote:SetWordWrap(true)
-        end
-        turboModeNote:SetText(
-            L["|cff888888Combine with Fast Mode for the fastest cycle. Turn off if you see disconnects.|r"]
-        )
-
-        -- Quality threshold (v2.4.0+): three per-rarity rows, each independently
-        -- togglable with its own optional max iLvl. Replaces the old single-dropdown
-        -- "sell up to quality X" model. Default all off; opt-in per rarity.
+        -- Quality threshold (v2.4.0+): per-rarity rows with optional max iLvl.
         local thresholdHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        thresholdHeader:SetPoint("TOPLEFT", turboModeNote, "BOTTOMLEFT", -26, -24)
+        if merchantModeShown then
+            thresholdHeader:SetPoint("TOPLEFT", modeLabel, "BOTTOMLEFT", 0, -20)
+        else
+            thresholdHeader:SetPoint("TOPLEFT", 16, -76)
+        end
         thresholdHeader:SetText(L["Quality Threshold"])
         NS.AddHelpIcon(content, thresholdHeader, "LEFT", "RIGHT", 6, 0, "gate-quality-rules")
 
-        -- v2.10.0: bind-type filter options shared across all four rarity rows.
-        -- "any" = today's behaviour (rule applies regardless of bind type);
-        -- "boe" / "bop" restrict to items the tooltip says bind on equip /
-        -- on pickup. Items with no bind line at all read as "any" from
-        -- EC_compCache.getBindType so reagents/consumables/quest items are
-        -- protected when bindFilter is "boe" or "bop".
-        local EC_BIND_FILTER_OPTIONS = {
-            { text = L["Any bind type"], value = "any" },
-            { text = L["BoE only"], value = "boe" },
-            { text = L["BoP only"], value = "bop" },
-        }
-        local function EC_BindFilterText(value)
-            for _, entry in ipairs(EC_BIND_FILTER_OPTIONS) do
-                if entry.value == value then
-                    return entry.text
-                end
-            end
-            return EC_BIND_FILTER_OPTIONS[1].text
-        end
-
-        -- Build a row per rarity. Each row: checkbox on the left, "max iLvl:"
-        -- label + numeric input on the right (0-300). Below the checkbox, a
-        -- "Bind: <Any/BoE/BoP>" dropdown that gates the rule on bind type.
-        -- Returns the bind dropdown so the next row's anchor descends past
-        -- the second line cleanly.
         local function MakeQualityRow(anchor, qualityIdx, labelText, yOff)
             local cb = NS.AddCheckbox(
                 content,
@@ -571,33 +244,13 @@ MerchantPanel:SetScript("OnShow", function(self)
             useEqText:SetPoint("RIGHT", useEqCB, "LEFT", -2, 0)
             useEqText:SetText(L["Use equipped iLvl"])
 
-            -- iLvl-mode help: [?] sits just left of the "Use equipped iLvl"
-            -- toggle (the controls it explains), deep-linking the fixed-cap
-            -- vs. equipped-iLvl entry. The bind-filter [?] on the second
-            -- line below links to its own entry, so each icon matches the
-            -- control beside it.
-            local ilvlHelp = NS.AddHelpIcon(content, useEqText, "RIGHT", "LEFT", -2, 0, "gate-fixed-vs-equipped-ilvl")
-
-            -- Re-anchor the rarity-row checkbox's auto-label so its right
-            -- edge is bounded by the "Use equipped iLvl" text's left edge.
-            -- The row-specific LEFT+RIGHT anchor pair fits the max-iLvl
-            -- input + Use-Equipped controls better than a fixed or
-            -- reactive width would; the rarity name truncates cleanly
-            -- rather than visually colliding with the iLvl controls.
-            -- v2.59.10 (bug-hunt finding): NS.AddCheckbox now registers
-            -- the label in the reactive-width registry (v2.59.8) so the
-            -- reactive-panel-layout invariant applies to it on every
-            -- Interface Options resize. This row's LEFT+RIGHT anchor
-            -- pair below is the actual width source; a per-resize
-            -- SetWidth would fight it. Deregister the label from the
-            -- registry after we set the anchor pair so anchor-derived
-            -- sizing wins cleanly. Only site in the codebase that
-            -- combines AddCheckbox + LEFT+RIGHT re-anchor.
+            -- Help icons are no-ops after the Help panel cut; bound the
+            -- rarity label against the "Use equipped iLvl" text directly.
             local rowLabel = _G[cb:GetName() .. "Text"]
             if rowLabel then
                 rowLabel:ClearAllPoints()
                 rowLabel:SetPoint("LEFT", cb, "RIGHT", 4, 1)
-                rowLabel:SetPoint("RIGHT", ilvlHelp, "LEFT", -4, 0)
+                rowLabel:SetPoint("RIGHT", useEqText, "LEFT", -4, 0)
                 rowLabel:SetJustifyH("LEFT")
                 if rowLabel.SetWordWrap then
                     rowLabel:SetWordWrap(false)
@@ -688,234 +341,23 @@ MerchantPanel:SetScript("OnShow", function(self)
             end)
             input:SetScript("OnEditFocusLost", commit)
 
-            -- Bind-type filter dropdown on a second line below the checkbox.
-            -- Indented to align with the checkbox label so the rule reads as
-            -- "[x] Blue (Rare) max iLvl: [200] / Bind: [Any bind type]".
-            local bindLbl = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-            bindLbl:SetPoint("TOPLEFT", cb, "BOTTOMLEFT", 26, -4)
-            bindLbl:SetText(L["Bind:"])
-
-            local bindDD = CreateFrame(
-                "Frame",
-                "EbonClearanceQualityRow" .. qualityIdx .. "BindDD",
-                content,
-                "UIDropDownMenuTemplate"
-            )
-            bindDD:SetPoint("LEFT", bindLbl, "RIGHT", -8, -2)
-
-            local function BindFilterInit(_frame, level)
-                for _, entry in ipairs(EC_BIND_FILTER_OPTIONS) do
-                    local info = UIDropDownMenu_CreateInfo()
-                    info.text = entry.text
-                    info.value = entry.value
-                    info.checked = (DB.qualityRules[qualityIdx].bindFilter == entry.value)
-                    info.func = function()
-                        DB.qualityRules[qualityIdx].bindFilter = entry.value
-                        UIDropDownMenu_SetText(bindDD, entry.text)
-                        PlaySound("igMainMenuOptionCheckBoxOn")
-                        -- Bind-filter change can drop or restore many
-                        -- slots from qualityPass at once; repaint.
-                        if NS.RefreshSellBorders then
-                            NS.RefreshSellBorders()
-                        end
-                    end
-                    UIDropDownMenu_AddButton(info, level)
-                end
-            end
-            UIDropDownMenu_SetWidth(bindDD, 120)
-            UIDropDownMenu_SetText(bindDD, EC_BindFilterText(DB.qualityRules[qualityIdx].bindFilter))
-            UIDropDownMenu_Initialize(bindDD, BindFilterInit)
-
-            -- Per-row help icon for the bind-type filter, sitting right
-            -- after the Bind dropdown it explains (the fixed-vs-equipped
-            -- iLvl decision has its own [?] up on line 1 next to the
-            -- "Use equipped iLvl" toggle).
-            NS.AddHelpIcon(content, bindDD, "LEFT", "RIGHT", 4, 2, "gate-bind-type")
-
-            return cb, input, bindDD, useEqCB
+            return cb, input, useEqCB
         end
 
-        -- All four rarity rows anchor their checkbox to the threshold header,
-        -- not to the previous row's dropdown. The dropdown's left edge is offset
-        -- by the UIDropDownMenuTemplate's internal padding (~16 px), and chaining
-        -- row N to row N-1's dropdown made each successive row staircase right.
-        -- A single shared anchor with explicit -y offsets keeps every checkbox,
-        -- bind label, and dropdown on the same X column.
-        --
-        -- Per-row vertical budget: ~28 px (checkbox + label) + ~6 px gap + ~30 px
-        -- dropdown frame + ~10 px gap to next row = ~74 px. -78 leaves a small
-        -- breathing margin between rows without overlapping the dropdown's
-        -- bottom shadow. The first row sits -16 below the header (was -10 below
-        -- a multi-line description block before Task 16 stripped it - the [?]
-        -- icon next to the header now carries the explanation).
-        local row1CB, row1Input, row1DD, row1UseEq =
+        local row1CB, row1Input, row1UseEq =
             MakeQualityRow(thresholdHeader, 1, EC_WHITELIST_QUALITIES[1].text, -16)
-        local row2CB, row2Input, row2DD, row2UseEq =
-            MakeQualityRow(thresholdHeader, 2, EC_WHITELIST_QUALITIES[2].text, -94)
-        local row3CB, row3Input, row3DD, row3UseEq =
-            MakeQualityRow(thresholdHeader, 3, EC_WHITELIST_QUALITIES[3].text, -172)
-        local row4CB, row4Input, row4DD, row4UseEq =
-            MakeQualityRow(thresholdHeader, 4, EC_WHITELIST_QUALITIES[4].text, -250)
+        local row2CB, row2Input, row2UseEq =
+            MakeQualityRow(thresholdHeader, 2, EC_WHITELIST_QUALITIES[2].text, -50)
+        local row3CB, row3Input, row3UseEq =
+            MakeQualityRow(thresholdHeader, 3, EC_WHITELIST_QUALITIES[3].text, -84)
+        local row4CB, row4Input, row4UseEq =
+            MakeQualityRow(thresholdHeader, 4, EC_WHITELIST_QUALITIES[4].text, -118)
 
-        self.qualityRow1CB, self.qualityRow1Input, self.qualityRow1DD, self.qualityRow1UseEq =
-            row1CB, row1Input, row1DD, row1UseEq
-        self.qualityRow2CB, self.qualityRow2Input, self.qualityRow2DD, self.qualityRow2UseEq =
-            row2CB, row2Input, row2DD, row2UseEq
-        self.qualityRow3CB, self.qualityRow3Input, self.qualityRow3DD, self.qualityRow3UseEq =
-            row3CB, row3Input, row3DD, row3UseEq
-        self.qualityRow4CB, self.qualityRow4Input, self.qualityRow4DD, self.qualityRow4UseEq =
-            row4CB, row4Input, row4DD, row4UseEq
+        self.qualityRow1CB, self.qualityRow1Input, self.qualityRow1UseEq = row1CB, row1Input, row1UseEq
+        self.qualityRow2CB, self.qualityRow2Input, self.qualityRow2UseEq = row2CB, row2Input, row2UseEq
+        self.qualityRow3CB, self.qualityRow3Input, self.qualityRow3UseEq = row3CB, row3Input, row3UseEq
+        self.qualityRow4CB, self.qualityRow4Input, self.qualityRow4UseEq = row4CB, row4Input, row4UseEq
 
-        -- Stash the BindFilterText helper on the panel so the inited refresh
-        -- block can update each dropdown's display text without re-defining
-        -- the option set.
-        self._BindFilterText = EC_BindFilterText
-
-        -- v2.49.3: "Sell recipes you already know" moved here from the
-        -- Keep Settings panel (formerly Protection Settings) - it is a sell
-        -- rule, so it belongs with the merchant sell rules. When ON,
-        -- profession recipes this character has ALREADY learned auto-sell at
-        -- vendors, gated per rarity + bind type. Unknown recipes are never
-        -- sold. The runtime "keep all tomes wins over sell-known-recipes"
-        -- precedence still lives in EC_IsSellable; this toggle is not greyed
-        -- by that setting (it just loses at decision time), so no cross-panel
-        -- dependency is needed. Reuses EC_BIND_FILTER_OPTIONS / EC_BindFilterText
-        -- (previously duplicated on the Protection panel; the dupe is gone).
-        local sellRecipesCB = CreateFrame(
-            "CheckButton",
-            "EbonClearanceSellKnownRecipesCB",
-            content,
-            "InterfaceOptionsCheckButtonTemplate"
-        )
-        sellRecipesCB:SetPoint("TOPLEFT", row4CB, "BOTTOMLEFT", 0, -60)
-        sellRecipesCB:SetChecked(DB.sellKnownRecipes)
-        local srText = _G[sellRecipesCB:GetName() .. "Text"]
-        if srText then
-            srText:SetText(L["Sell recipes you already know"])
-            EC_compCache.setPanelWidth(srText, 60)
-            srText:SetJustifyH("LEFT")
-        end
-        self.sellRecipesCB = sellRecipesCB
-        if srText then
-            NS.AddHelpIcon(content, srText, "LEFT", "RIGHT", 6, 0, "gate-sell-known-recipes")
-        end
-
-        -- Per-quality gate: four indented child checkboxes, one per recipe
-        -- rarity, each writing DB.sellKnownRecipeQualities[q]. Greyed out when
-        -- the parent is off. Each row has a Bind dropdown mirroring the
-        -- per-rarity bind-type filter on the quality rules above.
-        -- v2.66.1 iter (Serv report): colour words replaced with quality
-        -- names ("Common"/"Uncommon"/"Rare"/"Epic"). Matches the quality-
-        -- threshold rows above.
-        local recipeQualityLabels = { L["Common"], L["Uncommon"], L["Rare"], L["Epic"] }
-        local recipeQualityCBs = {}
-        local recipeBindDDs = {}
-        local recipeAnchor = sellRecipesCB
-        for q = 1, 4 do
-            local qcb = CreateFrame(
-                "CheckButton",
-                "EbonClearanceSellKnownRecipeQ" .. q .. "CB",
-                content,
-                "InterfaceOptionsCheckButtonTemplate"
-            )
-            if q == 1 then
-                qcb:SetPoint("TOPLEFT", recipeAnchor, "BOTTOMLEFT", 26, -6)
-            else
-                qcb:SetPoint("TOPLEFT", recipeAnchor, "BOTTOMLEFT", 0, -4)
-            end
-            qcb:SetChecked(DB.sellKnownRecipeQualities and DB.sellKnownRecipeQualities[q] or false)
-            local qText = _G[qcb:GetName() .. "Text"]
-            if qText then
-                qText:SetText(recipeQualityLabels[q])
-                qText:SetJustifyH("LEFT")
-            end
-            qcb:SetScript("OnClick", function(cb)
-                DB.sellKnownRecipeQualities = DB.sellKnownRecipeQualities or {}
-                DB.sellKnownRecipeQualities[q] = cb:GetChecked() and true or false
-                PlaySound("igMainMenuOptionCheckBoxOn")
-                if NS.RefreshSellBorders then
-                    NS.RefreshSellBorders()
-                end
-            end)
-            recipeQualityCBs[q] = qcb
-
-            -- Bind-type dropdown to the right of this rarity row.
-            local bindDD = CreateFrame(
-                "Frame",
-                "EbonClearanceSellKnownRecipeQ" .. q .. "BindDD",
-                content,
-                "UIDropDownMenuTemplate"
-            )
-            bindDD:SetPoint("LEFT", qcb, "RIGHT", 56, 0)
-            local function BindFilterInit(_frame, level)
-                for _, entry in ipairs(EC_BIND_FILTER_OPTIONS) do
-                    local info = UIDropDownMenu_CreateInfo()
-                    info.text = entry.text
-                    info.value = entry.value
-                    local cur = (DB.sellKnownRecipeBindFilter and DB.sellKnownRecipeBindFilter[q]) or "any"
-                    info.checked = (cur == entry.value)
-                    info.func = function()
-                        DB.sellKnownRecipeBindFilter = DB.sellKnownRecipeBindFilter or {}
-                        DB.sellKnownRecipeBindFilter[q] = entry.value
-                        UIDropDownMenu_SetText(bindDD, entry.text)
-                        PlaySound("igMainMenuOptionCheckBoxOn")
-                        if NS.RefreshSellBorders then
-                            NS.RefreshSellBorders()
-                        end
-                    end
-                    UIDropDownMenu_AddButton(info, level)
-                end
-            end
-            UIDropDownMenu_SetWidth(bindDD, 110)
-            local curBind = (DB.sellKnownRecipeBindFilter and DB.sellKnownRecipeBindFilter[q]) or "any"
-            UIDropDownMenu_SetText(bindDD, EC_BindFilterText(curBind))
-            UIDropDownMenu_Initialize(bindDD, BindFilterInit)
-            recipeBindDDs[q] = bindDD
-
-            recipeAnchor = qcb
-        end
-        self.recipeQualityCBs = recipeQualityCBs
-        self.recipeBindDDs = recipeBindDDs
-
-        local function UpdateRecipeQualitiesEnabled()
-            local on = DB.sellKnownRecipes == true
-            for q = 1, 4 do
-                local qcb = recipeQualityCBs[q]
-                local qText = qcb and _G[qcb:GetName() .. "Text"]
-                local dd = recipeBindDDs[q]
-                if on then
-                    qcb:Enable()
-                    if qText then
-                        qText:SetTextColor(1, 1, 1)
-                    end
-                    if dd and UIDropDownMenu_EnableDropDown then
-                        UIDropDownMenu_EnableDropDown(dd)
-                    end
-                else
-                    qcb:Disable()
-                    if qText then
-                        qText:SetTextColor(0.5, 0.5, 0.5)
-                    end
-                    if dd and UIDropDownMenu_DisableDropDown then
-                        UIDropDownMenu_DisableDropDown(dd)
-                    end
-                end
-            end
-        end
-        self.UpdateRecipeQualitiesEnabled = UpdateRecipeQualitiesEnabled
-        UpdateRecipeQualitiesEnabled()
-
-        sellRecipesCB:SetScript("OnClick", function(cb)
-            DB.sellKnownRecipes = cb:GetChecked() and true or false
-            PlaySound("igMainMenuOptionCheckBoxOn")
-            UpdateRecipeQualitiesEnabled()
-            if NS.RefreshSellBorders then
-                NS.RefreshSellBorders()
-            end
-        end)
-
-        -- Size the scroll content to fit the bottom-most widget so the scrollbar
-        -- range matches actual content. The Epic recipe row is now the lowest.
-        NS.FitScrollContent(content, recipeQualityCBs[4])
+        NS.FitScrollContent(content, row4CB)
     end, true)
 end)

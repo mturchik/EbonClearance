@@ -34,7 +34,7 @@
 --   * NS.PrintNice / PrintNicef  (EbonClearance_Events.lua)
 --   * NS.TARGET_NAME             (EbonClearance_Events.lua, refreshed by EnsureDB)
 --   * _G["EbonClearanceOptionsMain"]      - main settings panel (named frame)
---   * _G["EbonClearanceOptionsProcessBags"] - Process Bags panel (named frame)
+--   * _G["EbonClearanceOptionsMain"] - Options panel (named frame)
 --   * EbonClearance_ToggleSettings / ToggleEnabled / ForceSell - WoW
 --     globals from the keybinding handler block in EbonClearance_Events.lua
 
@@ -145,22 +145,12 @@ local function EC_CreateMinimapButton()
                 return
             end
             NS.OpenOptionsPanel("EbonClearanceOptionsMain")
-        elseif button == "MiddleButton" then
-            if InCombatLockdown and InCombatLockdown() then
-                EC_compCache.pendingOpenAfterCombat = "process"
-                NS.PrintNice(L["|cffffb84dProcess Bags will open when combat ends.|r"])
-                return
-            end
-            NS.OpenOptionsPanel("EbonClearanceOptionsProcessBags")
         elseif button == "RightButton" then
             if not DB then
                 return
             end
-            -- v2.39.1: route through the canonical helper so the
-            -- minimap icon + Main panel checkbox + chat message +
-            -- sound stay consistent with every other entry point.
-            -- The helper itself updates the icon desaturation, so
-            -- this handler no longer needs to do it inline.
+            -- Route through the canonical helper so the minimap icon +
+            -- Main panel checkbox + chat message + sound stay consistent.
             if EbonClearance_ToggleEnabled then
                 EbonClearance_ToggleEnabled()
             end
@@ -175,7 +165,7 @@ local function EC_CreateMinimapButton()
     btn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:AddLine("EbonClearance")
-        GameTooltip:AddLine(L["Left: Options  |  Middle: Process Bags  |  Right: Toggle Addon"], 1, 1, 1)
+        GameTooltip:AddLine(L["Left: Options  |  Right: Toggle Addon"], 1, 1, 1)
         local stateStr = (DB and DB.enabled ~= false) and L["|cff00ff00Enabled|r"] or L["|cffff4444Disabled|r"]
         GameTooltip:AddLine(L["Status: "] .. stateStr)
         local freeSlots = NS.GetFreeBagSlots()

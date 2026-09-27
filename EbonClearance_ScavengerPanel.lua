@@ -44,12 +44,6 @@ ScavengerPanel:SetScript("OnShow", function(self)
         if self.sumCB then
             self.sumCB:SetChecked(DB.summonGreedy)
         end
-        if self.restoreLoadCB then
-            self.restoreLoadCB:SetChecked(DB.restoreScavengerAfterLoad)
-        end
-        if self.delaySlider then
-            self.delaySlider:SetValue(DB.summonDelay or 1.6)
-        end
         -- Hide chat + hide bubbles are no longer user-toggleable; their
         -- DB fields are forced true in EnsureDB. The muteCB OnShow guard
         -- predated the panel-split refactor and never had a backing
@@ -114,99 +108,13 @@ ScavengerPanel:SetScript("OnShow", function(self)
             NS.AddHelpIcon(content, st, "LEFT", "RIGHT", 6, 0, "scav-summon")
         end
 
-        local combatOnlyCB = NS.AddCheckbox(
-            content,
-            "EbonClearanceSummonOnlyOutOfCombatCB",
-            sumCB,
-            L["Only summon |cffff7f7fGreedy Scavenger|r when out of combat"],
-            function()
-                return DB.summonOnlyOutOfCombat
-            end,
-            function(v)
-                DB.summonOnlyOutOfCombat = v
-            end,
-            -8
-        )
-        self.combatOnlyCB = combatOnlyCB
-        do
-            local t = _G[combatOnlyCB:GetName() .. "Text"]
-            if t then
-                NS.AddHelpIcon(content, t, "LEFT", "RIGHT", 6, 0, "scav-combat-only")
-            end
-        end
-
-        -- v2.65.0 (Alckor request): re-summon the Scavenger after ANY
-        -- loading screen (dungeon / raid / bg / arena / hearth / teleport
-        -- / continent-flight) if the pet was out immediately beforehand.
-        -- Blizzard's engine dismisses CRITTER companions across every
-        -- loading screen. Opt-in; the handler that reads this toggle
-        -- lives in the PLAYER_ENTERING_WORLD branch of the event
-        -- dispatcher and consults EC_compCache.lastScavengerOut to
-        -- respect the user's pre-load-screen dismissal decision.
-        local restoreLoadCB = NS.AddCheckbox(
-            content,
-            "EbonClearanceRestoreScavengerAfterLoadCB",
-            combatOnlyCB,
-            L["Re-summon |cffff7f7fGreedy Scavenger|r after loading screens (if it was out)"],
-            function()
-                return DB.restoreScavengerAfterLoad
-            end,
-            function(v)
-                DB.restoreScavengerAfterLoad = v
-            end,
-            -8
-        )
-        self.restoreLoadCB = restoreLoadCB
-        do
-            local t = _G[restoreLoadCB:GetName() .. "Text"]
-            if t then
-                NS.AddHelpIcon(content, t, "LEFT", "RIGHT", 6, 0, "scav-restore-load")
-            end
-        end
-
-        -- Hide chat + hide bubbles checkboxes were removed: this is now
-        -- baked-in addon behaviour. DB.hideGreedyChat /
-        -- DB.hideGreedyBubbles are forced true in EnsureDB so the
-        -- Companion.lua filters keep working unchanged.
-
-        local delaySlider = NS.AddSlider(
-            content,
-            "EbonClearanceSummonDelaySlider",
-            restoreLoadCB,
-            L["Summon delay"],
-            0.0,
-            20.0,
-            0.1,
-            function()
-                return DB.summonDelay or 1.6
-            end,
-            function(v)
-                DB.summonDelay = v
-            end,
-            -16,
-            "%.1fs"
-        )
-        self.delaySlider = delaySlider
-        delaySlider:SetWidth(200)
-        -- v2.66.1 iter (Serv report): anchor to the slider's label
-        -- FontString (which sits above the bar) instead of the slider
-        -- frame's TOPRIGHT, so the [?] sits inline next to the label
-        -- - matches the Keep Settings slider [?] pattern.
-        local delaySliderText = _G["EbonClearanceSummonDelaySliderText"]
-        NS.AddHelpIcon(
-            content,
-            delaySliderText or delaySlider,
-            "LEFT",
-            delaySliderText and "RIGHT" or "TOPRIGHT",
-            6,
-            0,
-            "scav-summon-delay"
-        )
+        -- Out-of-combat summon, restore-after-load, and summon delay stay
+        -- on in the runtime; their checkboxes/slider were removed (scope cut).
 
         local cycleCB = NS.AddCheckbox(
             content,
             "EbonClearanceAutoLootCycleCB",
-            delaySlider,
+            sumCB,
             L["Enable auto-loot cycle (loot, sell, repeat)"],
             function()
                 return DB.autoLootCycle
@@ -220,7 +128,7 @@ ScavengerPanel:SetScript("OnShow", function(self)
                     end
                 end
             end,
-            -16
+            -12
         )
         self.cycleCB = cycleCB
         local cycleCBText = _G[cycleCB:GetName() .. "Text"]

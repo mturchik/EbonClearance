@@ -352,7 +352,7 @@ NS.RegisterLocale("deDE", {
     ["|cff888888New here? Pick a preset or answer 15 questions for a guided setup.|r"] = "|cff888888Neu hier? Wähle eine Vorlage oder beantworte 15 Fragen für eine geführte Einrichtung.|r",
     ["Current Rules"] = "Aktuelle Regeln",
     ["|cff888888See every active rule + the order EC applies them.|r"] = "|cff888888Sieh alle aktiven Regeln + die Reihenfolge, in der EC sie anwendet.|r",
-    ["|cff888888Right-click any bag item with Alt held for quick actions.|r"] = "|cff888888Rechtsklick auf einen Taschengegenstand mit gedrückter Alt-Taste für Schnellaktionen.|r",
+    ["|cff888888Right-click any bag item with Alt held for quick actions. Right-click the minimap button to turn the addon on or off.|r"] = "|cff888888Rechtsklick auf einen Taschengegenstand mit gedrückter Alt-Taste für Schnellaktionen. Rechtsklick auf den Minikartenknopf schaltet das Addon ein oder aus.|r",
     ["Tell me when an update is available"] = "Benachrichtige mich bei Updates",
     ["Show the EbonClearance minimap button"] = "EbonClearance-Minikartenknopf anzeigen",
     ["Slash Commands"] = "Slash-Befehle",

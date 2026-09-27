@@ -65,23 +65,11 @@ BlacklistSettingsPanel:SetScript("OnShow", function(self)
         if self.autoUpgradeCB then
             self.autoUpgradeCB:SetChecked(DB.autoProtectUpgrades)
         end
-        if self.autoSetCB then
-            self.autoSetCB:SetChecked(DB.autoProtectEquipmentSets)
-        end
         if self.autoAffixCB then
             self.autoAffixCB:SetChecked(DB.protectAffixedRareItems)
         end
         if self.dupeAffixCB then
             self.dupeAffixCB:SetChecked(DB.affixAllowExactDupes)
-        end
-        if self.keepBoeCB then
-            self.keepBoeCB:SetChecked(DB.keepBoeAffixDupes)
-        end
-        if self.keepBoeRankCB then
-            self.keepBoeRankCB:SetChecked(DB.keepBoeBelowRankFloor)
-        end
-        if self.protectHiILvlCB then
-            self.protectHiILvlCB:SetChecked(DB.automarkProtectHighILvl ~= false)
         end
         if self.UpdateDupeAffixEnabled then
             self:UpdateDupeAffixEnabled()
@@ -89,20 +77,8 @@ BlacklistSettingsPanel:SetScript("OnShow", function(self)
         if self.procCB then
             self.procCB:SetChecked(DB.protectChanceOnHitItems)
         end
-        if self.sellKnownProcCB then
-            self.sellKnownProcCB:SetChecked(DB.sellChanceOnHitKnown)
-        end
-        if self.UpdateSellKnownProcEnabled then
-            self.UpdateSellKnownProcEnabled()
-        end
         if self.unlearnedTomeCB then
             self.unlearnedTomeCB:SetChecked(DB.protectUnlearnedTomes)
-        end
-        if self.allTomeCB then
-            self.allTomeCB:SetChecked(DB.protectAllTomes)
-        end
-        if self.UpdateAllTomeEnabled then
-            self:UpdateAllTomeEnabled()
         end
         -- v2.74.0: re-evaluated on every re-show, so a PE addon that loads
         -- late (or a /ec affixfallback flip) is picked up without a rebuild.
@@ -201,35 +177,8 @@ BlacklistSettingsPanel:SetScript("OnShow", function(self)
             NS.AddHelpIcon(content, auText, "LEFT", "RIGHT", 6, 0, "tshoot-upgrade-keep")
         end
 
-        -- v2.13.0 Equipment Manager protection. Catches the dual-spec /
-        -- off-set gap: items assigned to your alternate Blizzard equipment
-        -- set sit in bags between swaps and aren't protected by
-        -- autoAddEquipped (which only catches currently-equipped slots).
-        -- One-shot sync at toggle, then EQUIPMENT_SETS_CHANGED reactive.
-        local autoSetCB =
-            CreateFrame("CheckButton", "EbonClearanceAutoProtectSetsCB", content, "InterfaceOptionsCheckButtonTemplate")
-        autoSetCB:SetPoint("TOPLEFT", autoUpgradeCB, "BOTTOMLEFT", 0, -10)
-        autoSetCB:SetChecked(DB.autoProtectEquipmentSets)
-        local asText = _G[autoSetCB:GetName() .. "Text"]
-        if asText then
-            asText:SetText(L["Keep items in your saved equipment sets"])
-            EC_compCache.setPanelWidth(asText, 60)
-            asText:SetJustifyH("LEFT")
-        end
-        autoSetCB:SetScript("OnClick", function(cb)
-            local on = cb:GetChecked() and true or false
-            local wasOff = (DB.autoProtectEquipmentSets ~= true)
-            DB.autoProtectEquipmentSets = on
-            PlaySound("igMainMenuOptionCheckBoxOn")
-            if on and wasOff then
-                EC_compCache.syncEquipmentSets(false)
-                refreshKeepListUI()
-            end
-        end)
-        self.autoSetCB = autoSetCB
-        if asText then
-            NS.AddHelpIcon(content, asText, "LEFT", "RIGHT", 6, 0, "label-keep-gear-set")
-        end
+        -- Equipment-set protection stays on in the runtime; its checkbox was
+        -- removed from this panel (scope cut).
 
         -- v2.19.0 PE roguelite affix protection. The base itemID of an
         -- affixed item (e.g. "Thorbia's Gauntlets of Fortified by Pain IV")
@@ -264,7 +213,7 @@ BlacklistSettingsPanel:SetScript("OnShow", function(self)
             content,
             "InterfaceOptionsCheckButtonTemplate"
         ))
-        autoAffixCB:SetPoint("TOPLEFT", autoSetCB, "BOTTOMLEFT", 0, -10)
+        autoAffixCB:SetPoint("TOPLEFT", autoUpgradeCB, "BOTTOMLEFT", 0, -10)
         autoAffixCB:SetChecked(DB.protectAffixedRareItems)
         local aaText = _G[autoAffixCB:GetName() .. "Text"]
         if aaText then
@@ -358,379 +307,29 @@ BlacklistSettingsPanel:SetScript("OnShow", function(self)
         end
         self.dupeAffixNote = dupeAffixNote
 
-        -- v2.44.0: affix-rank floor slider. Asked for by Murlocked - on
-        -- servers like PE where affixed Rare/Epic items saturate the
-        -- bag, the player typically wants to keep only high-rank
-        -- drops and sell the rest. The slider sets a minimum rank;
-        -- anything below the threshold falls through the affix
-        -- protection and is eligible for normal sell / delete /
-        -- process rules. 0 means "off" (no threshold), 1-5 maps to
-        -- rank I through V. Cleaning up the slider label below
-        -- replaces the default "Sell affixes below rank: N" with
-        -- "Off" when the value is 0 (a numeric "0" alongside ranks
-        -- I-V reads as confusing).
-        -- v2.52.0: rank ceiling widened from V (5) to VI (6) - Project
-        -- Ebonhold added rank VI affixes. The Roman numeral parser
-        -- already handles multi-char (`VI` = V + I = 6) so only the
-        -- slider range needs widening. Existing SavedVariables with
-        -- affixMinSellRank = 6 pass EnsureDB's unbounded clamp fine.
-        local rankSlider = markPE(NS.AddSlider(
-            content,
-            "EbonClearanceAffixMinSellRankSlider",
-            dupeAffixNote,
-            L["Sell affixes below rank"],
-            0,
-            6,
-            1,
-            function()
-                return DB.affixMinSellRank or 0
-            end,
-            function(v)
-                DB.affixMinSellRank = v
-                -- Repaint the sell-border tints: changing the floor
-                -- flips EC_IsSellable's verdict for every affixed
-                -- Rare/Epic item in bags. Matches the dupeAffixCB /
-                -- autoAffixCB OnClick patterns above.
-                if NS.RefreshSellBorders then
-                    NS.RefreshSellBorders()
-                end
-            end,
-            -14,
-            "%d"
-        ))
-        -- v2.44.0: align the slider with dupeAffixCB. AddSlider anchors
-        -- to its anchor's BOTTOMLEFT at the anchor's x position;
-        -- dupeAffixNote sits at +26 from dupeAffixCB (its own indent
-        -- under the parent toggle), which would put the slider at
-        -- double the indent. Shift left by 26 px so the slider lines
-        -- up with dupeAffixCB visually - both are siblings under the
-        -- parent affix-protection toggle.
-        -- Note: this anchor is a temporary placeholder; the v2.66.0
-        -- follow-up further down re-anchors rankSlider to keepBoeCB
-        -- so it sits under the "Allow selling ..." + BoE grouping.
-        -- keepBoeCB is created LATER in this build block, so we can't
-        -- reference it here.
-        rankSlider:ClearAllPoints()
-        rankSlider:SetPoint("TOPLEFT", dupeAffixNote, "BOTTOMLEFT", -26, -14)
-        EC_compCache.setPanelWidth(rankSlider, 100)
-        local function refreshRankSliderLabel(value)
-            local txt = _G["EbonClearanceAffixMinSellRankSliderText"]
-            if not txt then
-                return
-            end
-            if value == 0 then
-                txt:SetText(L["Sell affixes below rank"] .. ": " .. L["Off"])
-            else
-                txt:SetText(L["Sell affixes below rank"] .. ": " .. tostring(value))
-            end
-        end
-        rankSlider:HookScript("OnValueChanged", function(_, v)
-            refreshRankSliderLabel(v)
-            -- v2.66.0: re-sync the enabled state of the new "Keep BoE
-            -- below rank floor" companion toggle so it greys out when
-            -- the slider drops to 0 (Off) and lights up when it moves
-            -- above 0. self is captured from the panel closure.
-            if self and self.UpdateDupeAffixEnabled then
-                self:UpdateDupeAffixEnabled()
-            end
-        end)
-        refreshRankSliderLabel(DB.affixMinSellRank or 0)
-        local rankLow = _G["EbonClearanceAffixMinSellRankSliderLow"]
-        if rankLow then
-            rankLow:SetText(L["Off"])
-        end
-        local rankHigh = _G["EbonClearanceAffixMinSellRankSliderHigh"]
-        if rankHigh then
-            -- v2.52.0 widened the slider to 6 but the High label stayed
-            -- at "5" - reported by Serv. Match the slider's actual max.
-            rankHigh:SetText("6")
-        end
-        self.rankSlider = rankSlider
-        if NS.AddHelpIcon then
-            local sliderText = _G["EbonClearanceAffixMinSellRankSliderText"]
-            if sliderText then
-                markPE(NS.AddHelpIcon(content, sliderText, "LEFT", "RIGHT", 6, 0, "gate-affix-rank-floor"))
-            end
-        end
+        -- Extra affix rank / BoE / auto-mark controls removed from the UI
+        -- (scope cut); DB fields and runtime behaviour are unchanged.
 
-        -- v2.44.0: explainer note under the rank slider. Mirrors the
-        -- dupeAffixNote's active-state explainer so the OR-relationship
-        -- between the two affix-sell rules is visible at both points
-        -- of toggling, not only in the Rule Summary. Hidden when the
-        -- slider is Off (0) since there's nothing to explain.
-        local rankSliderNote = markPE(content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall"))
-        rankSliderNote:SetPoint("TOPLEFT", rankSlider, "BOTTOMLEFT", 0, -6)
-        EC_compCache.setPanelWidth(rankSliderNote, 86)
-        rankSliderNote:SetJustifyH("LEFT")
-        if rankSliderNote.SetWordWrap then
-            rankSliderNote:SetWordWrap(true)
-        end
-        rankSliderNote:SetText("")
-        self.rankSliderNote = rankSliderNote
-        local function refreshRankSliderNote(value)
-            if (value or 0) > 0 then
-                rankSliderNote:SetText(
-                    L["|cff888888Sells affixes below this rank, even ones you haven't extracted. Independent of the toggle above.|r"]
-                )
-            else
-                rankSliderNote:SetText("")
-            end
-        end
-        rankSlider:HookScript("OnValueChanged", function(_, v)
-            refreshRankSliderNote(v)
-        end)
-        refreshRankSliderNote(DB.affixMinSellRank or 0)
-
-        -- v2.66.0 (Valentine request): BoE-keep for the rank-floor sell
-        -- rule. Companion to the rank slider above; parallel to the
-        -- keepBoeCB for the owned-dupe rule below. When on, BoE items
-        -- with rank below the floor are kept for auction; soulbound
-        -- items in the same band still sell.
-        local keepBoeRankCB = markPE(CreateFrame(
-            "CheckButton",
-            "EbonClearanceKeepBoeBelowRankFloorCB",
-            content,
-            "InterfaceOptionsCheckButtonTemplate"
-        ))
-        keepBoeRankCB:SetPoint("TOPLEFT", rankSliderNote, "BOTTOMLEFT", 0, -8)
-        keepBoeRankCB:SetChecked(DB.keepBoeBelowRankFloor)
-        local kbrText = _G[keepBoeRankCB:GetName() .. "Text"]
-        if kbrText then
-            kbrText:SetText(L["Keep BoE affixes below rank floor"])
-            EC_compCache.setPanelWidth(kbrText, 86)
-            kbrText:SetJustifyH("LEFT")
-            if kbrText.SetWordWrap then
-                kbrText:SetWordWrap(true)
-            end
-        end
-        keepBoeRankCB:SetScript("OnClick", function(cb)
-            DB.keepBoeBelowRankFloor = cb:GetChecked() and true or false
-            PlaySound("igMainMenuOptionCheckBoxOn")
-            if NS.RefreshSellBorders then
-                NS.RefreshSellBorders()
-            end
-        end)
-        self.keepBoeRankCB = keepBoeRankCB
-        if kbrText then
-            markPE(NS.AddHelpIcon(content, kbrText, "LEFT", "RIGHT", 6, 0, "gate-keep-boe-below-rank"))
-        end
-
-        -- v2.47.0 sub-toggle of "Allow selling affixes you already have":
-        -- keep bind-on-equip owned dupes for the auction house, sell only the
-        -- soulbound ones. When on, EC_IsSellable's dupe release is restricted
-        -- to soulbound items. Default off (preserves the existing behaviour of
-        -- selling all owned dupes regardless of bind). Asked for by Broyo: he
-        -- wants soulbound dupes vendored but BoE dupes kept to auction.
-        local keepBoeCB = markPE(CreateFrame(
-            "CheckButton",
-            "EbonClearanceKeepBoeAffixDupesCB",
-            content,
-            "InterfaceOptionsCheckButtonTemplate"
-        ))
-        -- Sits in the child column (rankSliderNote is already at the child
-        -- indent), below the rank-slider note - grouped with the affix-sell
-        -- controls it relates to.
-        -- v2.66.0 (Serv follow-up): moved from "under keepBoeRankCB" to
-        -- "under dupeAffixNote" so the toggle sits directly beneath its
-        -- parent rule ("Allow selling affixes you already have"). Its
-        -- rank-floor sibling stays under the rank slider. -26 x-offset
-        -- returns from the note's double indent (dupeAffixNote at +52)
-        -- to the sub-toggle column (+26) so the checkbox lines up with
-        -- dupeAffixCB visually.
-        keepBoeCB:SetPoint("TOPLEFT", dupeAffixNote, "BOTTOMLEFT", -26, -8)
-        keepBoeCB:SetChecked(DB.keepBoeAffixDupes)
-        local kbText = _G[keepBoeCB:GetName() .. "Text"]
-        if kbText then
-            kbText:SetText(L["Keep BoE affixes you already have"])
-            EC_compCache.setPanelWidth(kbText, 86)
-            kbText:SetJustifyH("LEFT")
-        end
-        keepBoeCB:SetScript("OnClick", function(cb)
-            DB.keepBoeAffixDupes = cb:GetChecked() and true or false
-            PlaySound("igMainMenuOptionCheckBoxOn")
-            -- Flipping this changes EC_IsSellable's verdict for every BoE
-            -- affixed dupe; repaint the tints. Same rule as the dupeAffixCB /
-            -- rankSlider OnClick handlers above.
-            if NS.RefreshSellBorders then
-                NS.RefreshSellBorders()
-            end
-        end)
-        self.keepBoeCB = keepBoeCB
-        if kbText then
-            markPE(NS.AddHelpIcon(content, kbText, "LEFT", "RIGHT", 6, 0, "gate-keep-boe-dupes"))
-        end
-
-        -- v2.66.0 (Serv follow-up): the two BoE sub-toggles were both
-        -- grouped after the rank slider originally, which visually
-        -- disconnected keepBoeCB from its parent rule ("Allow selling
-        -- affixes you already have"). Re-anchor rankSlider so it sits
-        -- BELOW keepBoeCB, giving the layout:
-        --   Allow selling affixes you already have
-        --     Keep BoE affixes you already have    (keepBoeCB)
-        --   Sell affixes below rank N              (rankSlider)
-        --     [rank slider note]
-        --     Keep BoE affixes below rank floor    (keepBoeRankCB)
-        -- rankSliderNote + keepBoeRankCB chain-anchor off rankSlider so
-        -- they follow it down automatically. keepBoeCB (X=26) shares the
-        -- sub-toggle column with rankSlider, so 0 x-offset here.
-        rankSlider:ClearAllPoints()
-        rankSlider:SetPoint("TOPLEFT", keepBoeCB, "BOTTOMLEFT", 0, -14)
-
-        -- v2.60.0 (Serv follow-up): "Protect high-iLvl items from
-        -- unsellable-affix auto-mark". Sub-toggle for the v2.57.2 iLvl
-        -- safety net that skips auto-mark on any item at iLvl >= 200.
-        -- Default ON (preserves the Bizzaro-style protection against
-        -- auto-trashing a brand-new high-value drop with a dupe affix).
-        -- Turn OFF to allow auto-mark to catch old high-iLvl PvP gear
-        -- the player has grown out of. Other safety nets (Keep List,
-        -- gear-set members, currently equipped, quest items) stay
-        -- unconditional either way. Lives here in Keep Settings for
-        -- consistency with the other "Protect X" toggles - though it
-        -- specifically affects the Delete Settings auto-mark scan.
-        local protectHiILvlCB = markPE(CreateFrame(
-            "CheckButton",
-            "EbonClearanceAutoMarkProtectHighILvlCB",
-            content,
-            "InterfaceOptionsCheckButtonTemplate"
-        ))
-        -- v2.66.0 (Serv follow-up): keepBoeCB moved UP to sit directly
-        -- under its dupeAffix parent, so protectHiILvlCB (and every
-        -- widget chained below it) followed keepBoeCB up and overlapped
-        -- the rank slider. Re-anchor to keepBoeRankCB - the new last
-        -- widget in the affix subsection - so the chance-on-hit +
-        -- tome sections that chain-anchor off protectHiILvlCB still
-        -- sit below the rank-floor group visually.
-        protectHiILvlCB:SetPoint("TOPLEFT", keepBoeRankCB, "BOTTOMLEFT", 0, -8)
-        protectHiILvlCB:SetChecked(DB.automarkProtectHighILvl ~= false)
-        local protectHiILvlText = _G[protectHiILvlCB:GetName() .. "Text"]
-        if protectHiILvlText then
-            protectHiILvlText:SetText(L["Protect iLvl 200+ items from auto-mark"])
-            EC_compCache.setPanelWidth(protectHiILvlText, 86)
-            protectHiILvlText:SetJustifyH("LEFT")
-            if protectHiILvlText.SetWordWrap then
-                protectHiILvlText:SetWordWrap(true)
-            end
-        end
-        protectHiILvlCB:SetScript("OnClick", function(cb)
-            DB.automarkProtectHighILvl = cb:GetChecked() and true or false
-            PlaySound(DB.automarkProtectHighILvl and "igMainMenuOptionCheckBoxOn" or "igMainMenuOptionCheckBoxOff")
-        end)
-        self.protectHiILvlCB = protectHiILvlCB
-        if protectHiILvlText then
-            markPE(NS.AddHelpIcon(content, protectHiILvlText, "LEFT", "RIGHT", 6, 0, "gate-automark-protect-hilvl"))
-        end
-
-        -- Greys-out the child CB when the parent toggle is off, and swaps
-        -- in a status line for that case. Called on init, on the parent
-        -- CB's OnClick, and on every refresh-callback fire.
-        --
-        -- v2.74.0: the "PE not detected" arm is gone. Whole-run
-        -- visibility moved to UpdatePEVisibility below, which HIDES these
-        -- widgets instead of greying them, so the disabled state here only
-        -- ever means "the parent toggle is off".
         local function UpdateDupeAffixEnabled()
             local parentOn = DB.protectAffixedRareItems == true
             if parentOn then
                 dupeAffixCB:Enable()
-                if rankSlider and rankSlider.Enable then
-                    rankSlider:Enable()
-                end
                 if daText then
                     daText:SetTextColor(1, 1, 1)
                 end
-                -- v2.44.0: active-state explainer. Tells the player
-                -- this toggle is its own rule, independent of the
-                -- rank slider directly below. The two are an OR -
-                -- without this note, players hit the confusion that
-                -- "I set the slider to 3 but rank-IV items still
-                -- sell because I have this on too." Toggles felt
-                -- like they were fighting until each one's scope
-                -- was explained at the toggle itself.
                 if DB.affixAllowExactDupes then
                     dupeAffixNote:SetText(
-                        L["|cff888888Sells affixes at ranks you already own. Independent of the rank slider below.|r"]
+                        L["|cff888888Sells affixes at ranks you already own.|r"]
                     )
                 else
                     dupeAffixNote:SetText("")
                 end
-                -- v2.44.0: keep the rank-slider note in sync with the
-                -- parent / slider state too.
-                if refreshRankSliderNote then
-                    refreshRankSliderNote(DB.affixMinSellRank or 0)
-                end
-                -- v2.47.0: the "keep BoE dupes" sub-option only does anything
-                -- when the dupe toggle above is on; enable it only then.
-                if keepBoeCB then
-                    if DB.affixAllowExactDupes then
-                        if keepBoeCB.Enable then
-                            keepBoeCB:Enable()
-                        end
-                        if kbText then
-                            kbText:SetTextColor(1, 1, 1)
-                        end
-                    else
-                        if keepBoeCB.Disable then
-                            keepBoeCB:Disable()
-                        end
-                        if kbText then
-                            kbText:SetTextColor(0.5, 0.5, 0.5)
-                        end
-                    end
-                end
-                -- v2.66.0 (Serv report): the "keep BoE below rank floor"
-                -- sub-option only does anything when the rank slider is
-                -- non-zero. Enable it when the slider is active, grey it
-                -- otherwise so the parent-child state is visually
-                -- consistent (child mustn't look live when the parent
-                -- gate is off).
-                if keepBoeRankCB then
-                    if (DB.affixMinSellRank or 0) > 0 then
-                        if keepBoeRankCB.Enable then
-                            keepBoeRankCB:Enable()
-                        end
-                        if kbrText then
-                            kbrText:SetTextColor(1, 1, 1)
-                        end
-                    else
-                        if keepBoeRankCB.Disable then
-                            keepBoeRankCB:Disable()
-                        end
-                        if kbrText then
-                            kbrText:SetTextColor(0.5, 0.5, 0.5)
-                        end
-                    end
-                end
             else
                 dupeAffixCB:Disable()
-                if rankSlider and rankSlider.Disable then
-                    rankSlider:Disable()
-                end
                 if daText then
                     daText:SetTextColor(0.5, 0.5, 0.5)
                 end
                 dupeAffixNote:SetText(L["|cff888888Turn on the affix protection above to use this option.|r"])
-                -- v2.44.0: collapse the rank-slider explainer when
-                -- the parent toggle is off (the slider has no effect).
-                if rankSliderNote then
-                    rankSliderNote:SetText("")
-                end
-                -- v2.47.0: grey the "keep BoE dupes" sub-option too.
-                if keepBoeCB and keepBoeCB.Disable then
-                    keepBoeCB:Disable()
-                end
-                if kbText then
-                    kbText:SetTextColor(0.5, 0.5, 0.5)
-                end
-                -- v2.66.0: grey the "keep BoE below rank floor" sub-option
-                -- too. Without the parent affix protection on, the rank
-                -- slider is inert; keep its companion toggle visually
-                -- consistent.
-                if keepBoeRankCB and keepBoeRankCB.Disable then
-                    keepBoeRankCB:Disable()
-                end
-                if kbrText then
-                    kbrText:SetTextColor(0.5, 0.5, 0.5)
-                end
             end
         end
         self.UpdateDupeAffixEnabled = UpdateDupeAffixEnabled
@@ -764,27 +363,7 @@ BlacklistSettingsPanel:SetScript("OnShow", function(self)
             content,
             "InterfaceOptionsCheckButtonTemplate"
         ))
-        -- v2.23.0: anchor moved from autoAffixNote to dupeAffixNote so the
-        -- new child toggle sits between the affix toggle and the chance-
-        -- on-hit toggle visually.
-        -- v2.26.0: x-offset corrected to -52 so procCB returns to the
-        -- parent toggle's indent column.
-        -- v2.44.0: re-anchored to the new rankSlider (which now sits
-        -- between dupeAffixNote and procCB). Slider sits at the
-        -- dupeAffixNote's +26 indent; procCB returns to the parent
-        -- toggle column via -26 (slider was already indented).
-        -- v2.44.0: re-anchored from rankSlider to rankSliderNote so the
-        -- procCB shifts down when the explainer note is visible (and
-        -- back up when the slider is Off and the note collapses).
-        -- v2.47.0: re-anchored to keepBoeCB (the new "keep BoE dupes"
-        -- sub-toggle now sits between rankSliderNote and procCB). keepBoeCB is
-        -- at the child column (+26), so -26 returns procCB to the parent
-        -- toggle column.
-        -- v2.60.0: re-anchored from keepBoeCB to protectHiILvlCB (the
-        -- new "Protect high-iLvl items" sub-toggle sits between
-        -- keepBoeCB and procCB). Same child->parent-column offset (-26)
-        -- so procCB returns to the parent toggle column.
-        procCB:SetPoint("TOPLEFT", protectHiILvlCB, "BOTTOMLEFT", -26, -10)
+        procCB:SetPoint("TOPLEFT", dupeAffixNote, "BOTTOMLEFT", -26, -10)
         procCB:SetChecked(DB.protectChanceOnHitItems)
         local pcText = _G[procCB:GetName() .. "Text"]
         if pcText then
@@ -813,87 +392,15 @@ BlacklistSettingsPanel:SetScript("OnShow", function(self)
             if NS.RefreshSellBorders then
                 NS.RefreshSellBorders()
             end
-            if self.UpdateSellKnownProcEnabled then
-                self.UpdateSellKnownProcEnabled()
-            end
         end)
 
-        -- v2.49.0 child toggle (experimental): auto-release chance-on-hit
-        -- items whose proc is in the player's extracted-spell catalog.
-        -- Mirrors the affix side's dupeAffixCB. Coverage is item-specific
-        -- (seed map + autolearn); items whose proc PE hasn't ported to
-        -- the 700xxx family stay protected regardless. Labelled
-        -- "(experimental)" because seed-map keywords are hand-curated
-        -- and may need iteration.
-        local sellKnownProcCB = markPE(CreateFrame(
-            "CheckButton",
-            "EbonClearanceSellChanceOnHitKnownCB",
-            content,
-            "InterfaceOptionsCheckButtonTemplate"
-        ))
-        sellKnownProcCB:SetPoint("TOPLEFT", procCB, "BOTTOMLEFT", 26, -4)
-        sellKnownProcCB:SetChecked(DB.sellChanceOnHitKnown)
-        local skpText = _G[sellKnownProcCB:GetName() .. "Text"]
-        if skpText then
-            skpText:SetText(L["Sell known chance-on-hit procs (experimental)"])
-            EC_compCache.setPanelWidth(skpText, 86)
-            skpText:SetJustifyH("LEFT")
-        end
-        sellKnownProcCB:SetScript("OnClick", function(cb)
-            DB.sellChanceOnHitKnown = cb:GetChecked() and true or false
-            PlaySound("igMainMenuOptionCheckBoxOn")
-            if NS.RefreshSellBorders then
-                NS.RefreshSellBorders()
-            end
-        end)
-        self.sellKnownProcCB = sellKnownProcCB
-        if skpText then
-            markPE(NS.AddHelpIcon(content, skpText, "LEFT", "RIGHT", 6, 0, "gate-sell-known-chance-on-hit"))
-        end
-
-        -- Grey the child when the parent is off (same pattern as the
-        -- affix-dupe child toggle above).
-        local function UpdateSellKnownProcEnabled()
-            local on = DB.protectChanceOnHitItems == true
-            if on then
-                sellKnownProcCB:Enable()
-                if skpText then
-                    skpText:SetTextColor(1, 1, 1)
-                end
-            else
-                sellKnownProcCB:Disable()
-                if skpText then
-                    skpText:SetTextColor(0.5, 0.5, 0.5)
-                end
-            end
-        end
-        self.UpdateSellKnownProcEnabled = UpdateSellKnownProcEnabled
-        UpdateSellKnownProcEnabled()
-
-        -- Tome protection. Parent + child checkbox pair mirroring the
-        -- affix-dupe shape above:
-        --   * Parent (unlearnedTomeCB) controls DB.protectUnlearnedTomes -
-        --     when ON, unlearned spell-teaching items (recipes, tomes,
-        --     scrolls) are protected.
-        --   * Child (allTomeCB), indented and only enabled when parent is
-        --     ON, controls DB.protectAllTomes - extends the protection to
-        --     items the character has already learned.
-        -- Both HARD-VETO in EC_IsSellable: a protected tome / recipe
-        -- cannot be vendored even when on the Sell List - the user must
-        -- explicitly Alt+Right-Click -> Allow Sell first. Mirrors affix-
-        -- protection semantics (v2.19.0), not chance-on-hit (v2.20.1).
         local unlearnedTomeCB = CreateFrame(
             "CheckButton",
             "EbonClearanceProtectUnlearnedTomesCB",
             content,
             "InterfaceOptionsCheckButtonTemplate"
         )
-        -- v2.49.0: anchor to sellKnownProcCB (new child of procCB) instead
-        -- of procCB directly, so this section shifts down to accommodate
-        -- the new sub-toggle. -26 returns to the parent column (offsetting
-        -- sellKnownProcCB's +26 child indent); -10 keeps the same vertical
-        -- gap the pre-v2.49.0 layout had against procCB.
-        unlearnedTomeCB:SetPoint("TOPLEFT", sellKnownProcCB, "BOTTOMLEFT", -26, -10)
+        unlearnedTomeCB:SetPoint("TOPLEFT", procCB, "BOTTOMLEFT", 0, -10)
         unlearnedTomeCB:SetChecked(DB.protectUnlearnedTomes)
         local utText = _G[unlearnedTomeCB:GetName() .. "Text"]
         if utText then
@@ -906,79 +413,9 @@ BlacklistSettingsPanel:SetScript("OnShow", function(self)
             NS.AddHelpIcon(content, utText, "LEFT", "RIGHT", 6, 0, "gate-tome-recipe")
         end
 
-        -- Child toggle: extends protection to already-known items.
-        -- Indented +26 from the parent CB so it sits a column further
-        -- right (matches the affix-dupe pattern; pre-Task 15 this
-        -- inherited the indent from the parent's explanatory note, but
-        -- the note was stripped and the indent is now applied directly).
-        local allTomeCB = CreateFrame(
-            "CheckButton",
-            "EbonClearanceProtectAllTomesCB",
-            content,
-            "InterfaceOptionsCheckButtonTemplate"
-        )
-        allTomeCB:SetPoint("TOPLEFT", unlearnedTomeCB, "BOTTOMLEFT", 26, -8)
-        allTomeCB:SetChecked(DB.protectAllTomes)
-        local atText = _G[allTomeCB:GetName() .. "Text"]
-        if atText then
-            atText:SetText(L["Keep them even after you learn them"])
-            EC_compCache.setPanelWidth(atText, 86)
-            atText:SetJustifyH("LEFT")
-        end
-        self.allTomeCB = allTomeCB
-        if atText then
-            NS.AddHelpIcon(content, atText, "LEFT", "RIGHT", 6, 0, "label-tome-have")
-        end
-
-        -- Status-feedback FontString. After Task 15 the explanatory text
-        -- for the active case lives in the Help panel ([?] icon above);
-        -- this note now only carries the disabled-state status message
-        -- ("Turn on the protection above"). FitScrollContent uses this
-        -- as the bottom-most widget so the scroll area still sizes
-        -- correctly when the note is empty.
-        local allTomeNote = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-        allTomeNote:SetPoint("TOPLEFT", allTomeCB, "BOTTOMLEFT", 26, -2)
-        EC_compCache.setPanelWidth(allTomeNote, 86)
-        allTomeNote:SetJustifyH("LEFT")
-        if allTomeNote.SetWordWrap then
-            allTomeNote:SetWordWrap(true)
-        end
-        self.allTomeNote = allTomeNote
-
-        allTomeCB:SetScript("OnClick", function(cb)
-            DB.protectAllTomes = cb:GetChecked() and true or false
-            PlaySound("igMainMenuOptionCheckBoxOn")
-            if NS.RefreshSellBorders then
-                NS.RefreshSellBorders()
-            end
-        end)
-
-        -- Greys-out the child CB when the parent is off, swapping the
-        -- explanatory note for a status line. Same shape as
-        -- UpdateDupeAffixEnabled above.
-        local function UpdateAllTomeEnabled()
-            local parentOn = DB.protectUnlearnedTomes == true
-            if parentOn then
-                allTomeCB:Enable()
-                if atText then
-                    atText:SetTextColor(1, 1, 1)
-                end
-                allTomeNote:SetText("")
-            else
-                allTomeCB:Disable()
-                if atText then
-                    atText:SetTextColor(0.5, 0.5, 0.5)
-                end
-                allTomeNote:SetText(L["|cff888888Turn on the protection above to use this option.|r"])
-            end
-        end
-        self.UpdateAllTomeEnabled = UpdateAllTomeEnabled
-        UpdateAllTomeEnabled()
-
         unlearnedTomeCB:SetScript("OnClick", function(cb)
             DB.protectUnlearnedTomes = cb:GetChecked() and true or false
             PlaySound("igMainMenuOptionCheckBoxOn")
-            UpdateAllTomeEnabled()
             if NS.RefreshSellBorders then
                 NS.RefreshSellBorders()
             end
@@ -988,16 +425,8 @@ BlacklistSettingsPanel:SetScript("OnShow", function(self)
         -- On a realm without the affix system those settings can never do
         -- anything, so they are removed rather than left greyed.
         --
-        -- The run is contiguous - autoAffixCB through sellKnownProcCB,
-        -- including the chance-on-hit pair - so the tome section is the
-        -- only thing chaining off the far end, and one re-anchor closes
-        -- the whole gap.
-        --
-        -- Hiding alone is not enough: a hidden frame keeps its rect, so
-        -- the chain would leave the run's full height as blank space. The
-        -- live anchor uses -26 to un-indent from sellKnownProcCB (a child-
-        -- column widget); autoSetCB already sits at the parent column, so
-        -- the replacement offset is 0.
+        -- The run is contiguous - autoAffixCB through procCB - so the
+        -- tome toggle re-anchors below autoUpgradeCB when the run is hidden.
         --
         -- Defined here rather than beside UpdateDupeAffixEnabled because
         -- it needs unlearnedTomeCB, created further down the build.
@@ -1013,19 +442,14 @@ BlacklistSettingsPanel:SetScript("OnShow", function(self)
             end
             unlearnedTomeCB:ClearAllPoints()
             if show then
-                unlearnedTomeCB:SetPoint("TOPLEFT", sellKnownProcCB, "BOTTOMLEFT", -26, -10)
+                unlearnedTomeCB:SetPoint("TOPLEFT", procCB, "BOTTOMLEFT", 0, -10)
             else
-                unlearnedTomeCB:SetPoint("TOPLEFT", autoSetCB, "BOTTOMLEFT", 0, -10)
+                unlearnedTomeCB:SetPoint("TOPLEFT", autoUpgradeCB, "BOTTOMLEFT", 0, -10)
             end
         end
         self.UpdatePEVisibility = UpdatePEVisibility
         UpdatePEVisibility()
 
-        -- v2.49.3: "Sell recipes you already know" (+ per-rarity gates and
-        -- bind dropdowns) moved to Merchant Settings - it is a sell rule,
-        -- not a keep rule. The tome KEEP controls stay here. The runtime
-        -- "keep all tomes wins over sell-known-recipes" precedence still
-        -- lives in EC_IsSellable, unchanged.
-        NS.FitScrollContent(content, allTomeNote)
+        NS.FitScrollContent(content, unlearnedTomeCB)
     end, true)
 end)

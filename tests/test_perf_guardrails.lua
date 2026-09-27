@@ -83,6 +83,111 @@ local function check(name, ok, message)
     end
 end
 
+-- Feature cut (docs/SCOPE_CUT.md): presence pins for deleted features are
+-- retired. Absence pins below replace the important ones. Matching check
+-- names are skipped so historical blocks can stay as documentation until
+-- a later cleanup pass deletes them outright.
+local FEATURE_CUT_SKIP = {
+    "rearmProcessButton", "EC_HandleAutoOpenContainers", "AutoOpen", "auto-open",
+    "PICK_LOCK", "Pick Lock", "Lockpick", "Lockpick mode", "buildProcessSummary",
+    "processTooltipHasLine", "processIsSoulbound",
+    "canDisenchant", "canMill", "canProspect", "canPickLock",
+    "SPELL_DISENCHANT", "SPELL_MILLING", "SPELL_PROSPECTING", "SPELL_PICK_LOCK",
+    "exportFullPack", "importFullPack", "PACK_PREFIX",
+    "uses NS.CopperToColoredText", "uses NS.session",
+    "EC_IsSellable calls EC_compCache.itemIsTome", "EC_IsSellable calls EC_compCache.playerKnowsTomeSpell",
+    "Fast Loot", "LootSlot()", "LOOT_READY",
+    "Process Bags", "rankBelow", "rank slider Help",
+    "runAutoMarkResilience", "Auto-deleted", "announce helper", "Help FAQ",
+    "CONVERTIBLE_ELEMENTALS", "canConvertElemental", "Convert branch", "modeOrder includes Convert",
+    "process-convert", "playerOwnsAffix", "ScanLootDelta", "skipDeleteListed",
+    "session.startedAt", "5-minute (300s) gate", "writes DB.bestGPH",
+    "10-second floor on session GPH", "Reset Lifetime",
+    "HelpPanel.lua exists", "StatsPanel.lua exists",
+    "AddHelpIcon", "OpenHelpEntry", "runAutoDeleteOnPickup", "auto-delete",
+    "executeBagSlotDelete", "affixDisposable", "runAutoMarkAffixDupes",
+    "auto-mark", "Resilience mark uses it", "scan requires disposable affix",
+    "sellKnownRecipeBindFilter", "section headers use gold",
+    "entry question text", "flash Texture", "NS.OpenHelpEntry", "refreshLayout reads chrome",
+    "EC_LogAutoMark", "last-run event timestamps", "Quickstart",
+    "EC_ScanLootDelta", "conflict popup", "runAutoDeleteGrey",
+    "Loot Log", "session logs hold", "trim counter", "Sold History",
+    "bugreport shows only a tail", "window offers All/Sold",
+    "force-refreshes equipment-set", "Will-Delete previews",
+    "scanners acquire the shared snapshot", "post-pickup-delete",
+    "openable cache", "deleteMode.present", "affixRankFloor.present",
+    "sellRecipes.present", "delete.present", "PBmodes:",
+    "pop-out windows route", "settingsProfileFields", "settings-profile",
+    "Default profile", "management functions exist and Use re-bootstraps",
+    "deleting a settings profile", "SaveSettingsProfile", "UseSettingsProfile",
+    "DeleteSettingsProfile", "RenameSettingsProfile", "sprofile",
+    "Settings Profiles panel", "Sold History pauses", "Loot Log pauses",
+    "NS.features",
+    "knownProcPass",
+    "Item Highlighting",
+    "ItemHighlightingPanel",
+    "CharPanel frame",
+    "CharPanel checkbox",
+    "SELL_BORDER_CATEGORIES",
+    "affix border category",
+    "keep' category",
+    "keep' entry",
+    "Borrow C",
+    "Needed Affix items",
+    "Known Affix items",
+    "Random affix items",
+}
+
+local _checkImpl = check
+function check(name, ok, message)
+    if not name:find("^feature cut:", 1) then
+        for i = 1, #FEATURE_CUT_SKIP do
+            if name:find(FEATURE_CUT_SKIP[i], 1, true) then
+                print("SKIP  " .. name .. " (feature cut)")
+                return
+            end
+        end
+    end
+    return _checkImpl(name, ok, message)
+end
+
+-- Feature-cut absence pins: chopped leaf files must stay gone.
+do
+    local gone = {
+        "EbonClearance_QuickstartPanel.lua",
+        "EbonClearance_HistoryWindow.lua",
+        "EbonClearance_StatsPanel.lua",
+        "EbonClearance_GuildPanel.lua",
+        "EbonClearance_ServerStatsPanel.lua",
+        "EbonClearance_GuildShare.lua",
+        "EbonClearance_ProcShare.lua",
+        "EbonClearance_ServerShare.lua",
+        "EbonClearance_RealmComms.lua",
+        "EbonClearance_Comms.lua",
+        "EbonClearance_Process.lua",
+        "EbonClearance_ProcessBagsPanel.lua",
+        "EbonClearance_ProfilesPanel.lua",
+        "EbonClearance_HelpPanel.lua",
+        "EbonClearance_ItemHighlightingPanel.lua",
+    }
+    for _, path in ipairs(gone) do
+        local f = io.open(path, "r")
+        check("feature cut: " .. path .. " is deleted", f == nil)
+        if f then f:close() end
+    end
+    check("feature cut: NS.features scaffolding removed",
+        src:find("NS.features", 1, true) == nil)
+    check("feature cut: settingsProfileFields registry removed",
+        src:find("settingsProfileFields", 1, true) == nil)
+    check("feature cut: two-tier DB proxy (no SPF route)",
+        src:find("local function EC_DBBuildProxy(charNamespace)", 1, true) ~= nil
+            and src:find("if SPF[k] then", 1, true) == nil)
+    check("feature cut: MainPanel has no RefreshStats",
+        src:find("function NS.RefreshStats", 1, true) == nil)
+    check("feature cut: minimap button checkbox remains on Main",
+        src:find("EbonClearanceMinimapButtonCB", 1, true) ~= nil)
+end
+
 -- ---------------------------------------------------------------------------
 -- Helper: extract the body of the BAG_UPDATE branch in the OnEvent
 -- dispatcher. Returns the text between `event == "BAG_UPDATE"` and the
@@ -1933,9 +2038,9 @@ do
     -- Registration call must use the _G lookup since the local was
     -- moved out of EbonClearance_Events.lua.
     check(
-        "Process Bags panel registered via _G lookup in EbonClearance_Events.lua",
-        src:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsProcessBags"%]%)') ~= nil,
-        "post-extraction, EbonClearance_Events.lua must call InterfaceOptions_AddCategory with the _G lookup"
+        "Process Bags panel not registered in Interface Options (settings cut)",
+        src:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsProcessBags"%]%)') == nil,
+        "settings cut: not registered in Interface Options"
     )
 end
 
@@ -2003,10 +2108,10 @@ do
             "OnShow body must call NS.AddCheckbox (the local lives in EbonClearance_Events.lua)"
         )
         check(
-            "EbonClearance_MerchantPanel.lua uses NS.AddSlider (not bare AddSlider)",
-            codeOnly:find("NS%.AddSlider%(") ~= nil
+            "EbonClearance_MerchantPanel.lua has no vendor-interval sliders (settings cut)",
+            codeOnly:find("NS%.AddSlider%(") == nil
                 and codeOnly:find("[^.%w_]AddSlider%(") == nil,
-            "OnShow body must call NS.AddSlider (the local lives in EbonClearance_Events.lua)"
+            "settings cut: fixed sell pace removed Fast/Turbo sliders from Merchant Settings"
         )
         check(
             "EbonClearance_MerchantPanel.lua uses NS.FitScrollContent (not bare EC_FitScrollContent)",
@@ -2145,10 +2250,7 @@ do
         "DB%.qualityRules%[qualityIdx%]%.maxILvl%s*=%s*v",
         "DB.qualityRules[qualityIdx].maxILvl (Merchant per-rarity input commit)"
     )
-    checkRefreshAfter(
-        "DB%.qualityRules%[qualityIdx%]%.bindFilter%s*=%s*entry%.value",
-        "DB.qualityRules[qualityIdx].bindFilter (Merchant per-rarity dropdown)"
-    )
+    -- settings cut: per-rarity bindFilter dropdown removed from Merchant Settings.
 
     -- EC_LoadProfile wholesale-rewrites DB.whitelist + DB.blacklist; it
     -- must follow up with NS.RefreshSellBorders so slot tints repaint.
@@ -2651,9 +2753,18 @@ do
     end
 
     check(
-        "Item Highlighting panel registered via _G lookup",
-        src:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsCharacter"%]%)') ~= nil,
-        "post-extraction, EbonClearance_Events.lua must call InterfaceOptions_AddCategory with the _G lookup"
+        "feature cut: Item Highlighting panel not registered in Interface Options",
+        src:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsCharacter"%]%)') == nil,
+        "borders always on; Item Highlighting options panel removed"
+    )
+    check(
+        "feature cut: EnsureDB forces all sell-border categories on",
+        src:find("DB%.sellBorderEnabled = true") ~= nil
+            and src:find("existing%.enabled = true") ~= nil
+            and src:find("keep = defaultCat%(") ~= nil
+            and src:find("affix = defaultCat%(") ~= nil
+            and src:find("affixneeded = defaultCat%(") ~= nil,
+        "master toggle and every listing-status category (incl. keep/affix/affixneeded) must stay forced on with no options UI"
     )
 end
 
@@ -2803,14 +2914,14 @@ do
     end
 
     check(
-        "Profiles panel registered via _G lookup",
-        src:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsProfiles"%]%)') ~= nil,
-        "post-extraction, EbonClearance_Events.lua must use the _G lookup"
+        "Profiles panel not registered in Interface Options (settings cut)",
+        src:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsProfiles"%]%)') == nil,
+        "settings cut: not registered in Interface Options"
     )
     check(
-        "Import/Export panel registered via _G lookup",
-        src:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsImportExport"%]%)') ~= nil,
-        "post-extraction, EbonClearance_Events.lua must use the _G lookup"
+        "Import/Export panel not registered in Interface Options (settings cut)",
+        src:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsImportExport"%]%)') == nil,
+        "settings cut: not registered in Interface Options"
     )
 end
 
@@ -3475,9 +3586,9 @@ do
             "the unlearned-tome checkbox OnClick must persist the new state"
         )
         check(
-            "ProtectionPanel writes DB.protectAllTomes",
-            panelSrc:find("DB%.protectAllTomes%s*=") ~= nil,
-            "the all-tomes checkbox OnClick must persist the new state"
+            "ProtectionPanel does not surface protectAllTomes (settings cut)",
+            panelSrc:find("DB%.protectAllTomes%s*=") == nil,
+            "settings cut: keep-unlearned-tomes baseline only; all-tomes toggle removed from Keep Settings"
         )
         -- Both OnClick handlers must call NS.RefreshSellBorders.
         -- Count occurrences as a sanity check (one per checkbox + the
@@ -4056,10 +4167,10 @@ do
         bd:find("elseif rankBelow then") ~= nil
             and bd:find("rank %%s below your floor of %%d") ~= nil,
         "/ec sellinfo must show a distinct 'rank below floor' step so the player can trace why the protection released")
-    check("Test 92g: ProtectionPanel renders the rank-floor slider",
-        pp:find("EbonClearanceAffixMinSellRankSlider") ~= nil
-            and pp:find("DB%.affixMinSellRank = v") ~= nil,
-        "the Item Protection panel must surface DB.affixMinSellRank via an NS.AddSlider widget with the setter writing the new value; without this UI the player has no way to change the floor")
+    check("Test 92g: ProtectionPanel does not render the rank-floor slider (settings cut)",
+        pp:find("EbonClearanceAffixMinSellRankSlider") == nil
+            and pp:find("DB%.affixMinSellRank = v") == nil,
+        "settings cut: affix rank floor UI removed from Keep Settings")
     check("Test 92i: EC_IsSellable adds affixRankPass + autoDupePass to the positive-signal check",
         dc:find("affixRankPass") ~= nil
             and dc:find("autoDupePass") ~= nil
@@ -4304,9 +4415,8 @@ do
         "the Main panel checkbox + /ec minimap slash command both flip the button via this helper. Without the NS export, the checkbox writes to DB.minimapButton but the button itself doesn't show/hide until /reload.")
     check("Test 97d: Main panel surfaces the minimap-button checkbox",
         mp:find("EbonClearanceMinimapButtonCB") ~= nil
-            and mp:find("DB%.minimapButton") ~= nil
             and mp:find("NS%.SetMinimapButtonVisible") ~= nil,
-        "the toggle must live on the Main panel near the version-alert checkbox so players who hit the Minimap-frame clash discover the workaround without needing the slash command.")
+        "minimap button stays after settings cut so players can Enable/Disable via right-click without /ec")
     check("Test 97e: /ec minimap slash subcommand dispatches on/off/reset",
         ev:find('cmd == "minimap"') ~= nil
             and ev:find('sub == "on" or sub == "show"') ~= nil
@@ -4540,9 +4650,9 @@ do
         return s
     end
     local ev = fileSrc("EbonClearance_Events.lua")
-    check("Test 101a: ScanLootDelta has skipDeleteListed gate keyed on enableDeletion AND autoDeleteOnPickup",
-        ev:find("local skipDeleteListed = DB and DB%.enableDeletion and DB%.autoDeleteOnPickup") ~= nil,
-        "the gate MUST check both toggles. If only enableDeletion is checked, players with autoDeleteOnPickup off would silently lose Loot Log entries for items they intentionally put on the Delete List for manual vendoring - they'd be 'destined' by intent but never actually destroyed. The autoDeleteOnPickup flag is what makes the race condition real.")
+    check("Test 101a: ScanLootDelta skipDeleteListed gated on NS.features.autoDeleteOnPickup",
+        ev:find("local skipDeleteListed = DB and NS%.features and NS%.features%.autoDeleteOnPickup and DB%.autoDeleteOnPickup") ~= nil,
+        "settings cut: loot log removed; when the feature flag is off the gate stays false. When auto-delete-on-pickup ships again, both NS.features and DB.autoDeleteOnPickup must be checked.")
     check("Test 101b: ScanLootDelta consults the Delete List via NS.IsInSet, not bare table access",
         ev:find("NS%.IsInSet%(deleteList, id%)") ~= nil,
         "the boolean-set semantics in the Delete List allow `true` or `1` per IsInSet's contract (Core line 78). A bare `deleteList[id]` access would miss the `== 1` case and also wouldn't normalise nil keys. Reuses the same helper as deleteListSlotEligible for consistency.")
@@ -5123,10 +5233,10 @@ do
 
     if helpSrc then
         check(
-            "Test 72: HelpPanel registers EbonClearanceOptionsHelp Interface Options frame",
+            "Test 72: HelpPanel creates EbonClearanceOptionsHelp frame (settings cut)",
             helpSrc:find('CreateFrame%("Frame", "EbonClearanceOptionsHelp"') ~= nil
-                and helpSrc:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsHelp"%]') ~= nil,
-            "Help panel must create a frame named EbonClearanceOptionsHelp and register it with InterfaceOptions_AddCategory so /ec help can jump to it"
+                and helpSrc:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsHelp"%]') == nil,
+            "settings cut: not registered in Interface Options"
         )
 
         check(
@@ -5220,11 +5330,10 @@ do
         local evSrc = evFile and evFile:read("*a") or ""
         if evFile then evFile:close() end
         check(
-            "Test 80a: Stats panel registers EbonClearanceOptionsStats frame",
+            "Test 80a: Stats panel creates EbonClearanceOptionsStats frame (settings cut)",
             statsSrc:find('CreateFrame%("Frame", "EbonClearanceOptionsStats"') ~= nil
-                and evSrc:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsStats"%]') ~= nil
-                and evSrc:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsCharacter"%][%s%S]-InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsStats"%][%s%S]-InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsWhitelist"%]') ~= nil,
-            "Stats panel must create a frame named EbonClearanceOptionsStats (in StatsPanel.lua) and Events.lua must register it via InterfaceOptions_AddCategory between Item Highlighting and Sell List (sort order: main settings first, then Stats, then the list group)"
+                and evSrc:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsStats"%]') == nil,
+            "settings cut: not registered in Interface Options"
         )
 
         check(
@@ -5579,7 +5688,7 @@ do
     local ttf = io.open("EbonClearance_Tooltip.lua", "rb")
     local bdf2 = io.open("EbonClearance_BagDisplay.lua", "rb")
     local ihf2 = io.open("EbonClearance_ItemHighlightingPanel.lua", "rb")
-    if protf and evf2 and ttf and bdf2 and ihf2 then
+    if protf and evf2 and ttf and bdf2 then
         local protSrc = protf:read("*a") or ""
         protf:close()
         local evSrc = evf2:read("*a") or ""
@@ -5588,8 +5697,11 @@ do
         ttf:close()
         local bdSrc2 = bdf2:read("*a") or ""
         bdf2:close()
-        local ihSrc2 = ihf2:read("*a") or ""
-        ihf2:close()
+        local ihSrc2 = ""
+        if ihf2 then
+            ihSrc2 = ihf2:read("*a") or ""
+            ihf2:close()
+        end
 
         -- Borrow A: AffixDebugDump function + the six call sites
         local hasFn = protSrc:find("local function AffixDebugDump") ~= nil
@@ -5719,9 +5831,10 @@ do
             local mpSrc = mpf:read("*a") or ""
             mpf:close()
             check(
-                "Test 88f: /ec affixdebug listed in Main panel slash command reference",
-                mpSrc:find("/ec affixdebug") ~= nil,
-                "The Main panel's Slash Commands section must list /ec affixdebug alongside the other commands so players can discover it without typing /ec help."
+                "Test 88f: Main panel slash catalog removed (settings cut)",
+                mpSrc:find("SLASH_ROWS") == nil
+                    and mpSrc:find("/ec affixdebug") == nil,
+                "settings cut: Main panel no longer lists slash commands in Interface Options"
             )
         end
 
@@ -5741,33 +5854,20 @@ do
             qpf:close()
             local mpSrc3 = mpf3:read("*a") or ""
             mpf3:close()
-            check(
-                "Test 88m: Quickstart wizard wired + settings-only invariant",
-                qpSrc:find("local PRESETS%s*=%s*{") ~= nil
-                    and qpSrc:find("recommended") ~= nil
-                    and qpSrc:find("cautious") ~= nil
-                    and qpSrc:find("farmer") ~= nil
-                    and qpSrc:find("power") ~= nil
-                    and qpSrc:find("local ANSWER_MAP%s*=%s*{") ~= nil
-                    and qpSrc:find("NS%.Quickstart%s*=%s*{") ~= nil
-                    and qpSrc:find("autoOpenContainers") ~= nil
-                    and qpSrc:find("protectAllTomes") ~= nil
-                    and qpSrc:find("itemLevelOverlay%.paperdoll") ~= nil
-                    and qpSrc:find("itemLevelOverlay%.merchant") ~= nil
-                    and qpSrc:find("maxILvl") ~= nil
-                    -- Settings-only invariant: NEVER touch user list data
-                    and qpSrc:find("DB%.whitelist") == nil
-                    and qpSrc:find("DB%.blacklist") == nil
-                    and qpSrc:find("DB%.deleteList") == nil
-                    and qpSrc:find("ADB%.whitelist") == nil
-                    -- Main panel surfaces a Quickstart entry point
-                    and mpSrc3:find("Open Quickstart") ~= nil
-                    -- Events.lua: new popup, dead old popup gone, auto-open flag
-                    and evSrc:find('StaticPopupDialogs%["EC_APPLY_QUICKSTART"%]') ~= nil
-                    and evSrc:find('StaticPopupDialogs%["EC_WELCOME"%]') == nil
-                    and evSrc:find("_needsQuickstartOpen") ~= nil,
-                "Quickstart panel must define ANSWER_MAP + PRESETS (4 keys); expose NS.Quickstart.Apply; cover the v2.38.0-added fields (autoOpenContainers / protectAllTomes / iLvl surfaces / qualityRules.maxILvl); never reference user list data; MainPanel must surface a Quickstart entry point; Events.lua must define EC_APPLY_QUICKSTART, NOT define EC_WELCOME, and set _needsQuickstartOpen on fresh install."
-            )
+            do
+                local coref = io.open("EbonClearance_Core.lua", "rb")
+                local coreSrc = coref and coref:read("*a") or ""
+                if coref then
+                    coref:close()
+                end
+                check(
+                    "Test 88m: Quickstart feature cut (NS.features + Main entry point)",
+                    coreSrc:find("quickstart%s*=%s*false") ~= nil
+                        and mpSrc3:find("Open Quickstart") == nil
+                        and evSrc:find("NS%.features and NS%.features%.quickstart and DB and DB%._needsQuickstartOpen") ~= nil,
+                    "settings cut: Quickstart not registered in Interface Options; auto-open gated on NS.features.quickstart"
+                )
+            end
         end
 
         -- v2.38.1: Stats panel character/account split. Locks the
@@ -5879,23 +5979,23 @@ do
                 local hpS = hpf:read("*a") or ""
                 hpf:close()
                 check(
-                    "Test 88ak: /ec processdebug diagnostic wired end-to-end",
+                    "Test 88ak: /ec processdebug diagnostic wired (settings cut: no Main SLASH_ROWS)",
                     brS:find("EC_BuildProcessDebugDump") ~= nil
                         and brS:find("NS%.ShowProcessDebugDump%s*=") ~= nil
                         and evSrc:find('cmd == "processdebug"') ~= nil
                         and evSrc:find("NS%.ShowProcessDebugDump%(%)") ~= nil
-                        and mpS4:find("processdebug") ~= nil
+                        and mpS4:find("processdebug") == nil
                         and hpS:find("bug%-process%-debug") ~= nil,
-                    "The /ec processdebug command must have: a builder (EC_BuildProcessDebugDump), namespace exposure (NS.ShowProcessDebugDump), a slash handler in Events.lua, a row in Main panel's SLASH_ROWS, AND a Help FAQ entry. Players hitting Mill/Prospect detection bugs need a paste-and-share dump path - same shape /ec affixdebug took for the affix pipeline."
+                    "settings cut: slash handler + dump builder remain; Main panel no longer lists commands in Interface Options"
                 )
                 check(
-                    "Test 88ak2: /ec scandebug diagnostic wired end-to-end (v2.44.12)",
+                    "Test 88ak2: /ec scandebug diagnostic wired (settings cut: no Main SLASH_ROWS)",
                     brS:find("EC_BuildScanDebugDump") ~= nil
                         and brS:find("NS%.ShowScanDebugDump%s*=") ~= nil
                         and evSrc:find('cmd == "scandebug"') ~= nil
                         and evSrc:find("NS%.ShowScanDebugDump%(bag, slot%)") ~= nil
-                        and mpS4:find("scandebug") ~= nil,
-                    "Zukii's report (v2.44.11 still didn't catch transferred-proc weapons) confirmed that string-pattern fixes on the chance-on-hit detector are guessing in the dark - we couldn't tell whether the proc text was in EC's hidden scan tooltip at all. /ec scandebug dumps every TextLeft line + parsed detection-helper results so future similar reports come with the real signal. Must have: builder (EC_BuildScanDebugDump), namespace exposure (NS.ShowScanDebugDump), slash handler in Events.lua, row in Main panel's SLASH_ROWS."
+                        and mpS4:find("scandebug") == nil,
+                    "settings cut: slash handler + dump builder remain; Main panel no longer lists commands in Interface Options"
                 )
                 -- v2.38.3: the scan tooltip silently loses SetOwner
                 -- mid-session (another addon iterating UIParent children
@@ -6239,14 +6339,12 @@ do
             local merSrc = merf:read("*a") or ""
             merf:close()
             check(
-                "Test 88l: Turbo Mode batch-vendor wired",
-                evSrc:find("DB%.turboMode%s*=%s*false") ~= nil
-                    and evSrc:find("local function EC_EffectiveBatchSize") ~= nil
-                    and evSrc:find("local batch = EC_EffectiveBatchSize%(%)") ~= nil
-                    and evSrc:find("for _ = 1, batch do") ~= nil
-                    and merSrc:find("EbonClearanceTurboModeCB") ~= nil
-                    and merSrc:find("Time between sells") ~= nil,
-                "EnsureDB seeds turboMode=false; EC_EffectiveBatchSize gates on DB.turboMode; worker loops the batch; Merchant panel renders the Turbo checkbox + relabelled slider."
+                "Test 88l: Fixed sell pace (settings cut: Turbo/Fast UI removed)",
+                evSrc:find("local function EC_EffectiveBatchSize") ~= nil
+                    and evSrc:find("local function EC_EffectiveBatchSize%(%)[%s%S]-return 1") ~= nil
+                    and merSrc:find("EbonClearanceTurboModeCB") == nil
+                    and merSrc:find("Time between sells") == nil,
+                "settings cut: EC_EffectiveBatchSize always returns 1; Merchant Settings no longer exposes Fast/Turbo controls"
             )
         end
 
@@ -6259,23 +6357,23 @@ do
             local mpSrc2 = mpf2:read("*a") or ""
             mpf2:close()
             check(
-                "Test 88j: /ec perf wired + discoverable",
+                "Test 88j: /ec perf wired (settings cut: not on Main panel)",
                 evSrc:find('if cmd == "perf"') ~= nil
                     and evSrc:find("GetAddOnMemoryUsage") ~= nil
                     and evSrc:find("affixDataCache") ~= nil
-                    and mpSrc2:find("/ec perf") ~= nil,
-                "/ec perf must exist in the slash dispatch, surface GetAddOnMemoryUsage, count the per-itemID caches, and appear in the Main panel slash reference."
+                    and mpSrc2:find("/ec perf") == nil,
+                "settings cut: /ec perf remains in the slash router; Main panel no longer lists it in Interface Options"
             )
             -- v2.37.6: clickable Run buttons for slash commands. The
             -- Main panel's Slash Commands section now stacks per-row
             -- frames; runnable commands get a Run button that calls
             -- SlashCmdList["EBONCLEARANCE"] with the command string.
             check(
-                "Test 88k: Main panel SLASH_ROWS table + Run-button wiring present",
-                mpSrc2:find("SLASH_ROWS%s*=%s*{") ~= nil
-                    and mpSrc2:find('SlashCmdList%["EBONCLEARANCE"%]') ~= nil
-                    and mpSrc2:find('btn:SetText%(L%["Run"%]%)') ~= nil,
-                "The Main panel must define the SLASH_ROWS table, create Run buttons, and dispatch via SlashCmdList[\"EBONCLEARANCE\"] so players can click commands instead of typing."
+                "Test 88k: Main panel SLASH_ROWS removed (settings cut)",
+                mpSrc2:find("SLASH_ROWS%s*=%s*{") == nil
+                    and mpSrc2:find('SlashCmdList%["EBONCLEARANCE"%]') == nil
+                    and mpSrc2:find('btn:SetText%(L%["Run"%]%)') == nil,
+                "settings cut: Main panel no longer hosts the clickable slash-command catalog"
             )
         end
 
@@ -6475,9 +6573,10 @@ do
         "Test 102d: runAutoMarkAffixDupes exists and gates correctly",
         markStart ~= nil
             and markBody:find("EC_IsAddonEnabledForChar") ~= nil
-            and markBody:find("DB%.enableDeletion and DB%.autoMarkAffixDupes") ~= nil
+            and markBody:find("NS%.features and NS%.features%.autoMarkAffixDupes") ~= nil
+            and markBody:find("DB%.autoMarkAffixDupes") ~= nil
             and markBody:find("DB%.protectAffixedRareItems") ~= nil,
-        "the sweep must short-circuit when master-disabled, when deletion or the feature toggle is off, AND when affix protection is off (it only matters for items protection is keeping, and the delete-path affix gate that re-verifies ownership only runs when protection is on). It does NOT require the 'sell exact-rank dupes' toggle - deleteListSlotEligible releases owned dupes when autoMarkAffixDupes is on (see 102c)."
+        "settings cut: auto-mark affix dupes gated on NS.features.autoMarkAffixDupes; sweep still honours DB.autoMarkAffixDupes and affix protection."
     )
 
     check(
@@ -6613,10 +6712,10 @@ do
     )
 
     check(
-        "Test 103e: Protection panel surfaces the keep-BoE-dupes child checkbox",
-        pp:find("EbonClearanceKeepBoeAffixDupesCB") ~= nil
-            and pp:find("DB%.keepBoeAffixDupes = cb:GetChecked") ~= nil,
-        "the sub-toggle lives under 'Allow selling affixes you already have', writing DB.keepBoeAffixDupes; without the UI the player can't enable it."
+        "Test 103e: Protection panel does not surface keep-BoE-dupes (settings cut)",
+        pp:find("EbonClearanceKeepBoeAffixDupesCB") == nil
+            and pp:find("DB%.keepBoeAffixDupes = cb:GetChecked") == nil,
+        "settings cut: BoE affix exception toggles removed from Keep Settings"
     )
 end
 
@@ -6664,15 +6763,14 @@ do
                 and dc:find("EC_compCache%.getBindType%(bag, slot%)") ~= nil
         end)(),
         "the gate MUST run AFTER the recipePass = true assignment so it CAN disqualify the slot. If the filter check ran before the assignment, the gate would be inert. The bind-type lookup MUST go through EC_compCache.getBindType (the same helper the quality rules use) so 'no bind line at all' reads as 'any' consistently across both sell-rule surfaces, and a 'BoE only' filter doesn't sweep up reagents masquerading as recipes.")
-    check("Test 104c: Merchant panel surfaces a Bind dropdown per recipe-quality row (moved from Protection/Keep in v2.49.3)",
-        mp:find('"EbonClearanceSellKnownRecipeQ" %.%. q %.%. "BindDD"') ~= nil
-            and mp:find("DB%.sellKnownRecipeBindFilter = DB%.sellKnownRecipeBindFilter or {}") ~= nil
-            and mp:find("DB%.sellKnownRecipeBindFilter%[q%] = entry%.value") ~= nil,
-        "v2.49.3 moved 'Sell recipes you already know' (a sell rule) from the Keep Settings panel (formerly Protection Settings) to Merchant Settings. The dropdown widget MUST exist per quality on the MERCHANT panel now (frame name pattern locked) AND MUST write DB.sellKnownRecipeBindFilter[q] on click; without both, the toggle is invisible to the player or doesn't persist.")
-    check("Test 104d: Sell Known Recipes checkbox lives on the Merchant panel, not the Protection/Keep panel",
-        mp:find('"EbonClearanceSellKnownRecipesCB"') ~= nil
+    check("Test 104c: Merchant panel does not surface recipe bind dropdowns (settings cut)",
+        mp:find('"EbonClearanceSellKnownRecipeQ" %.%. q %.%. "BindDD"') == nil
+            and mp:find("DB%.sellKnownRecipeBindFilter%[q%] = entry%.value") == nil,
+        "settings cut: sell-known-recipes UI removed from Merchant Settings")
+    check("Test 104d: Sell Known Recipes checkbox absent from panels (settings cut)",
+        mp:find('"EbonClearanceSellKnownRecipesCB"') == nil
             and pp:find('"EbonClearanceSellKnownRecipesCB"') == nil,
-        "v2.49.3: the Sell Known Recipes control (a sell rule) belongs on Merchant Settings. It must NOT remain on the Protection/Keep panel - a stray copy would double-wire DB.sellKnownRecipes and desync the two checkboxes.")
+        "settings cut: sell-known-recipes feature removed from Interface Options")
     check("Test 104e: Protection panel relabelled 'Keep Settings' (internal frame name kept for compat)",
         pp:find('%.name = "Keep Settings"') ~= nil
             and pp:find('L%["Keep Settings"%]') ~= nil
@@ -6719,9 +6817,9 @@ do
             and kdp:find('DeletionSettingsPanel%.name = "Delete Settings"') ~= nil
             and kdp:find('DeletionSettingsPanel%.parent = "EbonClearance"') ~= nil,
         "the new sub-panel MUST be a Frame named 'EbonClearanceOptionsDeletionSettings' with name='Delete Settings' and parent='EbonClearance'. Without those three, the panel either isn't discoverable by name (breaking Help-panel jump targets), doesn't appear in the Interface Options tree, or attaches to the wrong parent.")
-    check("Test 105b: Events.lua registers DeletionSettingsPanel immediately after Delete List",
-        ev:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsDeletion"%]%).-InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsDeletionSettings"%]%)') ~= nil,
-        "the AddCategory call for Delete Settings MUST come AFTER Delete List so the two sit adjacent in the Interface Options tree. Without adjacency the player has to hunt around the tree to find the settings for the list they're looking at.")
+    check("Test 105b: Events.lua does not register DeletionSettingsPanel (settings cut)",
+        ev:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsDeletionSettings"%]%)') == nil,
+        "settings cut: not registered in Interface Options")
     check("Test 105c: settings widgets live in the DeletionSettingsPanel OnShow, not the Delete List OnShow",
         (function()
             local newPanelStart = kdp:find('DeletionSettingsPanel:SetScript%("OnShow"', 1, false)
@@ -6846,10 +6944,10 @@ do
             and br:find("_G%.ExtractionService%.learnedAffixes") ~= nil,
         "the dump MUST include all three data sections for a maintainer to pair proc lines with spells: (1) bag-item chance-on-hit lines, (2) spellbook 'engrave this affix' spell tooltips, (3) the full PE learnedAffixes catalog with unknown fields exposed. Missing any of the three defeats the diagnostic's purpose.")
     local mp = fileSrc("EbonClearance_MainPanel.lua")
-    check("Test 107d: /ec captureproc appears in the Main panel SLASH_ROWS list",
-        mp:find('run = "captureproc"') ~= nil
-            and mp:find("|cffffff00/ec captureproc|r") ~= nil,
-        "every diagnostic slash command MUST have a row in the Main panel SLASH_ROWS table (that's the in-game slash-command list players see). Without this row, /ec captureproc is invisible unless the player already knows the exact command name - defeating the discoverability rationale that put every other diagnostic (/ec bugreport, /ec scandebug, /ec affixdebug, /ec processdebug) in the same list.")
+    check("Test 107d: /ec captureproc not listed on Main panel (settings cut)",
+        mp:find('run = "captureproc"') == nil
+            and mp:find("|cffffff00/ec captureproc|r") == nil,
+        "settings cut: Main panel no longer hosts the slash-command catalog in Interface Options")
     check("Test 107f: /ec bugreport surfaces v2.49.0/v2.49.1 chance-on-hit state",
         br:find("Sell Known Chance%-on%-Hit Procs %(experimental%)") ~= nil
             and br:find("ADB%.chanceProcConfirmedItems") ~= nil
@@ -6905,14 +7003,11 @@ do
                 and bd107i:find("EbonClearance Sell Info") ~= nil,
             "v2.50.5 request (Serv): /ec sellinfo + Alt+Right-Click -> Sell Info now open the shared EC_ShowCopyFrame popup (same one /ec bugreport, /ec affixdebug dump, /ec captureproc dump, /ec rules use) instead of printing 10+ lines to chat. Chat lines scroll off in busy channels before the player can copy them for a Discord paste; the popup's EditBox is Ctrl+A / Ctrl+C-selectable. Falls back to chat prints if NS.ShowCopyFrame is nil - impossible under the .toc load order but defensive against future refactors that separate BugReport from the addon.")
     end
-    check("Test 107e: v2.49.1 SLASH_ROWS supports `prefill` field for argument-requiring commands",
-        mp:find('prefill = "/ec profile "') ~= nil
-            and mp:find('prefill = "/ec minimap "') ~= nil
-            and mp:find('prefill = "/ec scandebug "') ~= nil
-            and mp:find('prefill = "/ec autolearnsim "') ~= nil
-            and mp:find("if row%.run or row%.prefill then") ~= nil
-            and mp:find("ChatFrame_OpenChat%(prefillCmd%)") ~= nil,
-        "v2.49.1 (Serv report): the Main panel Slash Commands list had rows with no Run button for commands that require arguments (/ec profile save/load/delete, /ec minimap on/off/reset, /ec scandebug <bag> <slot>, /ec autolearnsim <itemID> <spellID>). The fix: rows with `prefill = \"/ec ... \"` get a Run button that opens the chat edit box via ChatFrame_OpenChat with the command stem prefilled and cursor at the end - user just types the remaining args and hits Enter. Complementary to the direct-execute `run = \"...\"` field; neither replaces the other. Any argument-requiring command MUST now use prefill so the list has no gap-toothed rows.")
+    check("Test 107e: Main panel SLASH_ROWS prefill wiring removed (settings cut)",
+        mp:find('prefill = "/ec profile "') == nil
+            and mp:find("if row%.run or row%.prefill then") == nil
+            and mp:find("ChatFrame_OpenChat%(prefillCmd%)") == nil,
+        "settings cut: clickable slash-command catalog removed from Main panel")
     -- -----------------------------------------------------------------------
     -- Test 110 (v2.51.0): diagnostic-hooks release. Six ring buffers +
     -- one snapshot + eight last-run timestamps + expanded bug report +
@@ -7020,17 +7115,13 @@ do
                 and fileSrc("EbonClearance_BagDisplay.lua"):find("hasKnownAffix") ~= nil
                 and fileSrc("EbonClearance_BagDisplay.lua"):find("hasNeededAffix") ~= nil
                 and fileSrc("EbonClearance_BagDisplay.lua"):find('return "affixneeded"') ~= nil
-                and ev:find("affixneeded = { enabled = false") ~= nil
-                and fileSrc("EbonClearance_ItemHighlightingPanel.lua"):find('key = "affixneeded"') ~= nil
-                and fileSrc("EbonClearance_ItemHighlightingPanel.lua"):find('L%["Needed Affix items %(gold%)"%]') ~= nil,
-            "v2.52.0 (Serv report): the v2.51.3 rename made 'Known Affix items' lie because the underlying category still fired on ANY affix. Split into two complementary categories: `affix` (Known Affix items) fires ONLY when player owns the affix at rank/family/description via EC_compCache.playerOwnsAffix; new `affixneeded` (Needed Affix items) fires when player does NOT own it. Precedence in bagSlotWillSellCategory: affixneeded > affix (guards against future logic drift; they're complementary today).")
-        check("Test 110r: v2.52.0 rank ceiling widened from V (5) to VI (6)",
-            fileSrc("EbonClearance_ProtectionPanel.lua"):find("Sell affixes below rank") ~= nil
-                and fileSrc("EbonClearance_ProtectionPanel.lua"):find("0,%s+6,%s+1,") ~= nil
-                and fileSrc("EbonClearance_QuickstartPanel.lua"):find("belowVI = function%(DB%)") ~= nil
-                and fileSrc("EbonClearance_QuickstartPanel.lua"):find("DB%.affixMinSellRank = 6") ~= nil
-                and fileSrc("EbonClearance_QuickstartPanel.lua"):find('a%.affixRankFloor = "belowVI"') ~= nil,
-            "v2.52.0: Project Ebonhold added rank VI. ROMAN_VALUES already handles multi-char (VI = V+I via the standard algorithm), and EnsureDB's clamp is unbounded above, so only the Protection panel slider max (5 -> 6) and the Quickstart Q7c belowVI option + snapshot mapping need widening. Downgrade-safe: old client with affixMinSellRank=6 just clamps back to 5 via the older slider next time the setting is changed.")
+                and ev:find("affixneeded = defaultCat%(") ~= nil
+                and ev:find("affix = defaultCat%(") ~= nil,
+            "v2.52.0 split: affix (Known) vs affixneeded (Needed). Options panel removed; both categories are forced on via defaultCat.")
+        check("Test 110r: affix rank floor UI removed (settings cut)",
+            fileSrc("EbonClearance_ProtectionPanel.lua"):find("Sell affixes below rank") == nil
+                and fileSrc("EbonClearance_ProtectionPanel.lua"):find("0,%s+6,%s+1,") == nil,
+            "settings cut: rank-floor slider removed from Keep Settings; decision layer may still read DB.affixMinSellRank for saves compatibility")
         check("Test 110s: v2.52.0 describeSellability trace splits affix protection into known vs needed",
             fileSrc("EbonClearance_BagDisplay.lua"):find("Kept %- affix known") ~= nil
                 and fileSrc("EbonClearance_BagDisplay.lua"):find("Kept %- affix needed") ~= nil
@@ -7214,11 +7305,10 @@ do
             and tt:find("if procKnown and ctx%.sellChanceOnHitKnown and hasSellPriceHere then") ~= nil
             and tt:find("local hasSellPriceHere = itemSellPrice and itemSellPrice > 0") ~= nil,
         "the tooltip MUST distinguish 'known + toggle on' (Will Sell) from 'known + toggle off' (Keep known) so the player sees the current outcome without opening /ec sellinfo. Falls back to the pre-v2.49.0 'Keep (chance-on-hit proc)' when the proc isn't extracted (or PE hasn't ported it). v2.49.0 (Serv report, Nightfall): knownProcPass is a POSITIVE sell signal in EC_IsSellable (not a veto release), so 'Will Sell' fires the moment (procKnown AND toggle on), matching EC_IsSellable's positive-signal path. v2.49.0 (Serv report, Electrified Dagger): 'Will Sell' ALSO requires itemSellPrice > 0. Soulbound weapons with sellPrice=0 CANNOT be sold - EC_IsSellable's knownProcPass path gates on hasSellPrice for the same reason. Without this gate the tooltip advertises 'Will Sell' while the vendor refuses.")
-    check("Test 110g: ProtectionPanel surfaces the experimental checkbox",
-        pp:find("EbonClearanceSellChanceOnHitKnownCB") ~= nil
-            and pp:find("DB%.sellChanceOnHitKnown = cb:GetChecked") ~= nil
-            and pp:find('L%["Sell known chance%-on%-hit procs %(experimental%)"%]') ~= nil,
-        "the checkbox MUST exist with frame name locked (tests grep for it), the OnClick MUST write DB.sellChanceOnHitKnown, and the label MUST include the '(experimental)' suffix so the player knows coverage is item-specific and may need iteration.")
+    check("Test 110g: ProtectionPanel does not surface sell-known-procs (settings cut)",
+        pp:find("EbonClearanceSellChanceOnHitKnownCB") == nil
+            and pp:find("DB%.sellChanceOnHitKnown = cb:GetChecked") == nil,
+        "settings cut: sell-known-chance-on-hit procs toggle removed from Keep Settings")
     check("Test 110i: EC_CHANCE_PROC_NEVER_EXTRACTABLE gates playerHasExtractedProc ahead of the keyword map",
         prot:find("local EC_CHANCE_PROC_NEVER_EXTRACTABLE = {") ~= nil
             and prot:find("%[12797%] = \"Frostguard\"") ~= nil
@@ -7341,13 +7431,13 @@ do
             and ev:find('IsAddOnLoaded and IsAddOnLoaded%("AutoDelete"%)') ~= nil
             and ev:find("NS%.HasConflictingDeleteAddon = EC_HasConflictingDeleteAddon") ~= nil,
         "v2.49.2: detection helper for the third-party auto-delete addon. Per CLAUDE.md, code MAY reference the specific folder name via IsAddOnLoaded (necessary detection code); comments + local variable + all user-facing text stay neutral. Exposed on NS so /ec bugreport can consume it too.")
-    check("Test 113f: PLAYER_LOGIN shows the neutral conflict popup when toggle + detection + enableDeletion are all true",
+    check("Test 113f: conflict popup gated on NS.features.conflictWarning (settings cut)",
         ev:find('event == "PLAYER_LOGIN"') ~= nil
-            and ev:find("if DB%.enableDeletion and DB%.warnConflictingAddons and EC_HasConflictingDeleteAddon%(%) then") ~= nil
+            and ev:find("if NS%.features and NS%.features%.conflictWarning") ~= nil
+            and ev:find("DB%.warnConflictingAddons and EC_HasConflictingDeleteAddon%(%) then") ~= nil
             and ev:find('StaticPopup_Show%("EC_CONFLICT_WARNING"%)') ~= nil
-            and ev:find('StaticPopupDialogs%["EC_CONFLICT_WARNING"%]') ~= nil
-            and ev:find('L%["|cffff4444EbonClearance has detected that Auto Delete is also running%.') ~= nil,
-        "v2.49.2: PLAYER_LOGIN handler MUST show the modal conflict popup (a one-time chat line was easy to miss) only when all three conditions hold - EC's delete path is active (enableDeletion), the player hasn't opted out (warnConflictingAddons), and the detection helper reports a conflicting addon. The popup NAMES the conflicting addon ('Auto Delete') - a user-sanctioned one-off exception to the no-third-party-names rule so the warning is actionable; the detection helper, comments, and /ec bugreport line stay neutral. One-shot per session (gated inside the PLAYER_LOGIN-only branch, not PLAYER_ENTERING_WORLD).")
+            and ev:find('StaticPopupDialogs%["EC_CONFLICT_WARNING"%]') ~= nil,
+        "settings cut: conflict warning forced off via NS.features.conflictWarning; popup wiring remains for saves compatibility")
     check("Test 113b: runAutoDeleteGrey gates on all safety conditions",
         ev:find("function EC_compCache%.runAutoDeleteGrey%(%)") ~= nil
             and ev:find("DB%.autoDeleteGreyOnLoot") ~= nil
@@ -7365,11 +7455,10 @@ do
             and dp:find("DB%.autoDeleteGreyOnLoot") ~= nil
             and dp:find('L%["Auto%-delete grey items on loot"%]') ~= nil,
         "v2.49.2: Delete Settings panel MUST expose the grey-delete toggle with the frame name locked (tests grep for it) and the label pinned. Positioned after the Auto-delete on pickup checkbox for conceptual adjacency (both are 'delete on arrival' flows). Gated under the master Enable via refreshAutoCBEnabled like the sibling destructive toggles.")
-    check("Test 113g: main panel surfaces Warn about conflicting addons checkbox (persists via NS.DB)",
-        mp:find("EbonClearanceWarnConflictingAddonsCB") ~= nil
-            and mp:find("NS%.DB%.warnConflictingAddons") ~= nil
-            and mp:find('L%["Warn about conflicting addons"%]') ~= nil,
-        "v2.49.2: the conflict-warning opt-out lives on the MAIN panel with the other global toggles (version alert / minimap button), NOT in Delete Settings - it's an informational preference, not a delete rule. Frame name locked (tests grep for it) and the label pinned. MUST read/write NS.DB fully-qualified: BuildMainPanel has NO `DB` upvalue (bare `DB` resolves to the nil global), so a bare `DB.warnConflictingAddons` getter/setter silently fails to persist - the tick reverts on /reload (v2.49.2 in-game bug report from Serv). enableCB uses the same NS.DB pattern.")
+    check("Test 113g: main panel does not surface conflict-warning checkbox (settings cut)",
+        mp:find("EbonClearanceWarnConflictingAddonsCB") == nil
+            and mp:find("NS%.DB%.warnConflictingAddons") == nil,
+        "settings cut: conflicting-addon warning removed from Interface Options")
     check("Test 113h: /ec bugreport surfaces third-party auto-delete addon detection",
         br:find("Third%-party auto%-delete addon detected:") ~= nil
             and br:find("NS%.HasConflictingDeleteAddon") ~= nil,
@@ -8261,12 +8350,12 @@ do
     if ppf then
         ppf:close()
     end
-    check("Test 130f: Settings Profiles panel registered centrally, /ec sprofile wired",
-        ev130:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsSettingsProfiles"%]%)') ~= nil
+    check("Test 130f: Settings Profiles panel not in Interface Options; /ec sprofile wired",
+        ev130:find('InterfaceOptions_AddCategory%(_G%["EbonClearanceOptionsSettingsProfiles"%]%)') == nil
             and ev130:find('cmd == "sprofile"') ~= nil
             and pp130:find('CreateFrame%("Frame", "EbonClearanceOptionsSettingsProfiles"') ~= nil
             and pp130:find("InterfaceOptions_AddCategory") == nil,
-        "the panel lives in EbonClearance_ProfilesPanel.lua but MUST be registered centrally in Events (no panel self-registers - the central block owns sidebar order), and the /ec sprofile save|use|delete|list command family must exist alongside /ec profile.")
+        "settings cut: not registered in Interface Options")
 end
 
 -- ---------------------------------------------------------------------------

@@ -1,10 +1,9 @@
--- test_dbproxy.lua (v2.75.0, fresh-audit debt item)
--- Behavioural round-trip test for the three-tier DB proxy in
--- EbonClearance_Events.lua: top-level (account) / per-character / settings-
--- profile routing. Before this, the most load-bearing data structure in the
--- addon was covered only by regex checks against its own source. This slices
--- the REAL EC_DBBuildProxy + PER_CHAR_FIELDS out of the file and drives them
--- against a synthetic saved-variables table under stock lua5.1.
+-- test_dbproxy.lua
+-- Behavioural round-trip test for the two-tier DB proxy in
+-- EbonClearance_Events.lua: top-level (account) / per-character routing.
+-- Feature cut collapsed the former settings-profile tier into PER_CHAR_FIELDS.
+-- Slices the REAL EC_DBBuildProxy + PER_CHAR_FIELDS out of the file and drives
+-- them against a synthetic saved-variables table under stock lua5.1.
 
 local fails = 0
 local function check(name, cond)
@@ -29,23 +28,17 @@ assert(pcf, "could not slice PER_CHAR_FIELDS out of Events.lua")
 assert(proxy, "could not slice EC_DBBuildProxy out of Events.lua")
 
 -- Synthetic saved-variables. `enabled` differs between the per-char namespace
--- and the frozen top-level so per-character routing is provable. The Default
--- profile HAS fastMode but is MISSING vendorInterval (a field added after it
--- was created) to exercise the #5a legacy fallback.
+-- and the frozen top-level so per-character routing is provable. Former SPF
+-- fields (e.g. merchantMode) now live on the character namespace.
 local EbonClearanceDB = {
-    fastMode = "LEGACY_FAST", -- SPF field, frozen top-level value
-    vendorInterval = 0.15, -- SPF field, frozen top-level value
     someAccountField = "ACCOUNT", -- a plain account-wide (top-level) field
     enabled = true, -- frozen legacy master-enable (top-level)
-    settingsProfiles = {
-        Default = { fastMode = "DEFAULT_FAST" }, -- has fastMode, lacks vendorInterval
-    },
+    merchantMode = "LEGACY_MODE", -- frozen top-level leftover from pre-cut
 }
-local EC_compCache = { settingsProfileFields = { fastMode = true, vendorInterval = true } }
 
 local env = setmetatable({
     EbonClearanceDB = EbonClearanceDB,
-    EC_compCache = EC_compCache,
+    EC_compCache = {},
     rawget = rawget,
     rawset = rawset,
     setmetatable = setmetatable,
@@ -68,8 +61,12 @@ end
 local buildProxy = loader()
 
 -- charNamespace: a per-char field, a per-char `enabled` that DIFFERS from the
--- frozen top-level, and the active-profile pointer.
-local charNS = { blacklist = { [123] = true }, enabled = false, activeSettingsProfile = "Default" }
+-- frozen top-level, and a former settings-profile field now on the char.
+local charNS = {
+    blacklist = { [123] = true },
+    enabled = false,
+    merchantMode = "CHAR_MODE",
+}
 local DB = buildProxy(charNS)
 
 -- 1. PER_CHAR_FIELDS route to the character namespace.
@@ -85,19 +82,13 @@ DB.enabled = true
 check("enabled write routes to the char namespace, leaving the account value frozen",
     charNS.enabled == true and EbonClearanceDB.enabled == true)
 
--- 3. Settings-profile fields route to the active profile.
-check("SPF read routes to the active profile", DB.fastMode == "DEFAULT_FAST")
-DB.fastMode = "NEW_FAST"
-check("SPF write routes to the active profile, not the frozen top-level",
-    EbonClearanceDB.settingsProfiles.Default.fastMode == "NEW_FAST"
-        and EbonClearanceDB.fastMode == "LEGACY_FAST")
+-- 3. Former settings-profile fields are now per-character.
+check("former SPF field reads from the char namespace", DB.merchantMode == "CHAR_MODE")
+DB.merchantMode = "NEW_MODE"
+check("former SPF field write routes to the char namespace, not the frozen top-level",
+    charNS.merchantMode == "NEW_MODE" and EbonClearanceDB.merchantMode == "LEGACY_MODE")
 
--- 4. #5a: an SPF field the active profile lacks falls back to the frozen
--- top-level legacy value instead of returning nil (the future-field trap).
-check("SPF field missing on the profile falls back to the frozen legacy value (#5a)",
-    DB.vendorInterval == 0.15)
-
--- 5. Plain account-wide fields route to the top-level table.
+-- 4. Plain account-wide fields route to the top-level table.
 check("account field reads from the top-level table", DB.someAccountField == "ACCOUNT")
 DB.someAccountField = "CHANGED"
 check("account field write routes to the top-level table", EbonClearanceDB.someAccountField == "CHANGED")

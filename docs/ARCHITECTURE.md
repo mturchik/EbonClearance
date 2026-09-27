@@ -7,9 +7,11 @@ refactoring traps, comms/guild-share internals) read
 [ADDON_GUIDE.md](ADDON_GUIDE.md). For deferred work, read
 [CODE_REVIEW.md](CODE_REVIEW.md).
 
-EbonClearance is a WoW 3.3.5a (WotLK, Lua 5.1) bag manager: it vendors, deletes,
-loots, protects items by rule, and runs profession processing. No external
-libraries; all Blizzard APIs.
+EbonClearance is a WoW 3.3.5a (WotLK, Lua 5.1) bag manager focused on the
+companion summon loop, sell/keep/delete decisions, and the four lists. No
+external libraries; all Blizzard APIs. See [SCOPE_CUT.md](SCOPE_CUT.md) for
+what was removed. Trust [EbonClearance.toc](../EbonClearance.toc) for the live
+file list (23 `.lua` files after the feature cut).
 
 ## How the files fit together
 
@@ -30,7 +32,7 @@ from `Bindings.xml`.
 | [EbonClearance_Protection.lua](../EbonClearance_Protection.lua) | What to *keep*: PE roguelite affix + chance-on-hit detection and the affix-data cache. |
 | [EbonClearance_Vendor.lua](../EbonClearance_Vendor.lua) | The vendor cycle: `BuildQueue` / `DoNextAction` / `worker`, plus the `EC_Effective*` pacing helpers. |
 | [EbonClearance_Process.lua](../EbonClearance_Process.lua) | The Process Bags engine: Disenchant / Mill / Prospect / Lockpick. |
-| [EbonClearance_BagDisplay.lua](../EbonClearance_BagDisplay.lua) | Bag-slot sell-border tint + the sellinfo inspector (host bag UI adapter). Since v2.71.1 the inspector's verdict comes from `Decision.sell`; only the per-step narration is local. |
+| [EbonClearance_BagDisplay.lua](../EbonClearance_BagDisplay.lua) | The sellinfo inspector (`/ec sellinfo`). Bag-slot borders were removed in the feature cut. |
 
 ### Event hub & comms
 
@@ -51,17 +53,11 @@ One file per panel (or closely-related pair). All register centrally in
 [MainPanel](../EbonClearance_MainPanel.lua) ·
 [MerchantPanel](../EbonClearance_MerchantPanel.lua) ·
 [ScavengerPanel](../EbonClearance_ScavengerPanel.lua) ·
-[ProcessBagsPanel](../EbonClearance_ProcessBagsPanel.lua) ·
 [SellListPanels](../EbonClearance_SellListPanels.lua) ·
 [KeepDeletePanels](../EbonClearance_KeepDeletePanels.lua) ·
-[ProtectionPanel](../EbonClearance_ProtectionPanel.lua) ·
-[ItemHighlightingPanel](../EbonClearance_ItemHighlightingPanel.lua) ·
-[ProfilesPanel](../EbonClearance_ProfilesPanel.lua) (hosts List Profiles, Settings Profiles, and Import/Export) ·
-[StatsPanel](../EbonClearance_StatsPanel.lua) ·
-[GuildPanel](../EbonClearance_GuildPanel.lua) ·
-[ServerStatsPanel](../EbonClearance_ServerStatsPanel.lua) ·
-[QuickstartPanel](../EbonClearance_QuickstartPanel.lua) ·
-[HelpPanel](../EbonClearance_HelpPanel.lua)
+[ProtectionPanel](../EbonClearance_ProtectionPanel.lua)
+
+Bag listing-status borders live in [BagDisplay](../EbonClearance_BagDisplay.lua) (always on; no options panel).
 
 ### Panel infrastructure (shared widgets)
 

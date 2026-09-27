@@ -408,7 +408,8 @@ local function EC_fillSharedCtx(ctx, DB, ADB, itemID, quality)
     ctx.whitelistedAccount = (ADB and IsInSet(ADB.whitelist, itemID)) or false
     ctx.blacklisted = IsInSet(DB.blacklist, itemID)
     ctx.onDeleteList = (DB.deleteList and IsInSet(DB.deleteList, itemID)) and true or false
-    ctx.enableDeletion = DB.enableDeletion == true
+    -- Feature cut: being on the Delete List is enough (force enableDeletion).
+    ctx.enableDeletion = true
     ctx.equipped = IsEquippedItem(itemID) and true or false
     ctx.isQuestItem = EC_compCache.isQuestItem(itemID)
     ctx.baselineProtected = (EC_compCache.baselineProtectedIDs and EC_compCache.baselineProtectedIDs[itemID])
@@ -417,16 +418,25 @@ local function EC_fillSharedCtx(ctx, DB, ADB, itemID, quality)
     ctx.allowedItem = (ADB and ADB.allowedItems and ADB.allowedItems[itemID]) and true or false
     -- settings snapshot
     ctx.qualityRule = (quality and DB.qualityRules) and DB.qualityRules[quality] or nil
-    ctx.affixMinSellRank = DB.affixMinSellRank
+    -- Feature cut: bind filter forced to "any".
+    if ctx.qualityRule then
+        local qr = {}
+        for k, v in pairs(ctx.qualityRule) do
+            qr[k] = v
+        end
+        qr.bindFilter = "any"
+        ctx.qualityRule = qr
+    end
+    -- Feature cut: chopped sell/keep extras stay off at the live adapter.
+    -- Decision.sell still accepts the old fields for tests.
+    ctx.affixMinSellRank = 0
     ctx.affixAllowExactDupes = DB.affixAllowExactDupes
-    ctx.keepBoeAffixDupes = DB.keepBoeAffixDupes
-    ctx.keepBoeBelowRankFloor = DB.keepBoeBelowRankFloor
-    ctx.sellKnownRecipes = DB.sellKnownRecipes
-    ctx.sellKnownRecipeQuality = (quality and DB.sellKnownRecipeQualities) and DB.sellKnownRecipeQualities[quality]
-        or false
-    ctx.recipeBindFilter = (quality and DB.sellKnownRecipeBindFilter) and DB.sellKnownRecipeBindFilter[quality]
-        or "any"
-    ctx.sellChanceOnHitKnown = DB.sellChanceOnHitKnown
+    ctx.keepBoeAffixDupes = false
+    ctx.keepBoeBelowRankFloor = false
+    ctx.sellKnownRecipes = false
+    ctx.sellKnownRecipeQuality = false
+    ctx.recipeBindFilter = "any"
+    ctx.sellChanceOnHitKnown = false
     -- v2.74.0: chance-on-hit protection means "keep this until you extract
     -- the proc", which only has a reading where extraction exists. On a
     -- realm without the affix system there is no release path at all, so
@@ -442,7 +452,7 @@ local function EC_fillSharedCtx(ctx, DB, ADB, itemID, quality)
     local procProtectionApplies = EC_compCache.peFeaturesActive == nil or EC_compCache.peFeaturesActive()
     ctx.protectChanceOnHitItems = (DB.protectChanceOnHitItems and procProtectionApplies) and true or false
     ctx.protectAffixedRareItems = DB.protectAffixedRareItems
-    ctx.protectAllTomes = DB.protectAllTomes
+    ctx.protectAllTomes = false
     ctx.protectUnlearnedTomes = DB.protectUnlearnedTomes
     -- itemID-keyed thunks (identical for both adapters)
     function ctx.tomeKind()

@@ -399,38 +399,16 @@ local PER_CHAR_FIELDS = {
     -- account-wide aggregate lives in ADB.accountStats.lootedItemCounts and
     -- the live session view in the in-memory EC_lootSession.
     lootedItemCounts = true,
-    -- v2.36.x Help / FAQ panel per-section collapse state. Stored
-    -- per-character so each character can independently choose which
-    -- sections (troubleshooting / gates / labels) are expanded vs
-    -- collapsed. Matches the processCollapsedModes precedent. See
-    -- docs/specs/2026-05-26-help-faq-panel-design.md.
+    -- v2.36.x Help / FAQ panel per-section collapse state. Kept in SV for
+    -- downgrade safety; the Help panel itself was removed in the feature cut.
     helpSectionsCollapsed = true,
-    -- v2.72.0 settings profiles: WHICH settings profile this character
-    -- uses. The profile BODIES live at the top-level
-    -- EbonClearanceDB.settingsProfiles[name] (account-wide, so alts can
-    -- share one by pointing at it); only the pointer is per-character.
+    -- Feature cut: former settings-profile selling fields now live on the
+    -- character namespace (see EnsureDB one-shot flatten from the active
+    -- profile). activeSettingsProfile pointer is left for downgrade safety
+    -- and is no longer read by the proxy.
     activeSettingsProfile = true,
-}
-
--- v2.72.0 settings profiles: the selling-behaviour fields that live in a
--- named settings profile instead of the account-wide top level. The DB
--- proxy routes reads/writes of these through the character's active
--- profile (see EC_DBBuildProxy), so every existing `DB.<field>` call
--- site - panels, the decision core, the vendor cycle - works unchanged.
--- Scope decision (Serv, 2026-07-30): selling behaviour + vendor-visit
--- actions + pacing ONLY. Master enable, looting/scavenger behaviour,
--- visual preferences, locale, lists, and stats stay account-wide or
--- per-character exactly as before.
--- Top-level copies of these fields freeze at migration time as the
--- downgrade safety net + the seed for the "Default" profile (the same
--- model PER_CHAR_FIELDS established in v2.34).
--- Hangs off EC_compCache (not a main-chunk local): the Events main
--- chunk is AT the 200-locals cap.
-EC_compCache.settingsProfileFields = {
-    -- merchant / rules
     merchantMode = true,
     qualityRules = true,
-    -- deletion + auto-mark
     enableDeletion = true,
     autoDeleteOnPickup = true,
     autoDeleteGreyOnLoot = true,
@@ -440,7 +418,6 @@ EC_compCache.settingsProfileFields = {
     autoMarkAffixDupes = true,
     autoMarkKnownUnsellableRecipes = true,
     automarkProtectHighILvl = true,
-    -- protections
     protectAffixedRareItems = true,
     protectChanceOnHitItems = true,
     sellChanceOnHitKnown = true,
@@ -449,16 +426,13 @@ EC_compCache.settingsProfileFields = {
     autoAddEquipped = true,
     autoProtectUpgrades = true,
     autoProtectEquipmentSets = true,
-    -- affix rules
     affixAllowExactDupes = true,
     affixMinSellRank = true,
     keepBoeAffixDupes = true,
     keepBoeBelowRankFloor = true,
-    -- recipes
     sellKnownRecipes = true,
     sellKnownRecipeQualities = true,
     sellKnownRecipeBindFilter = true,
-    -- vendor-visit actions + pacing
     repairGear = true,
     repairUseGuildBank = true,
     vendorInterval = true,
@@ -483,39 +457,13 @@ local function EC_DBDeepCopy(t)
 end
 
 local function EC_DBBuildProxy(charNamespace)
-    local SPF = EC_compCache.settingsProfileFields
-    -- Resolve this character's settings-profile body. Falls back to
-    -- "Default" when the pointer names a profile that no longer exists
-    -- (safety net; the delete path also repoints stale pointers), and
-    -- to nil pre-migration so the read drops through to the top-level
-    -- legacy values.
-    local function activeSettings()
-        local profiles = rawget(EbonClearanceDB, "settingsProfiles")
-        if not profiles then
-            return nil
-        end
-        return profiles[charNamespace.activeSettingsProfile or "Default"] or profiles.Default
-    end
+    -- Feature cut: two-tier proxy only. Former settings-profile fields
+    -- are now PER_CHAR_FIELDS (flattened from the active profile once in
+    -- EnsureDB). Do not assign this proxy back onto EbonClearanceDB.
     return setmetatable({}, {
         __index = function(_, k)
             if PER_CHAR_FIELDS[k] then
                 return charNamespace[k]
-            end
-            if SPF[k] then
-                local p = activeSettings()
-                if p then
-                    local v = p[k]
-                    if v ~= nil then
-                        return v
-                    end
-                    -- v2.75.0 (fresh-audit fix): the active profile exists but
-                    -- lacks this field (a settings-profile field added AFTER the
-                    -- profile was created - the "future-field trap"). Fall
-                    -- through to the frozen top-level legacy value instead of
-                    -- returning nil, matching the pre-migration fallback the
-                    -- design intended. EnsureDB then writes the nil-default back
-                    -- into the profile through __newindex on its next pass.
-                end
             end
             return rawget(EbonClearanceDB, k)
         end,
@@ -523,13 +471,6 @@ local function EC_DBBuildProxy(charNamespace)
             if PER_CHAR_FIELDS[k] then
                 charNamespace[k] = v
                 return
-            end
-            if SPF[k] then
-                local p = activeSettings()
-                if p then
-                    p[k] = v
-                    return
-                end
             end
             rawset(EbonClearanceDB, k, v)
         end,
@@ -659,15 +600,6 @@ local function EnsureAccountDB()
     -- fires while the flag is on.
     if type(ADB.affixDebugMaxRows) ~= "number" or ADB.affixDebugMaxRows < 100 then
         ADB.affixDebugMaxRows = 1000
-    end
-    -- v2.46.x: Loot Log per-item hide set (itemID -> true). A display-only
-    -- filter so high-volume low-interest drops (e.g. cloth) can be hidden so
-    -- they stop skewing the share percentages; hidden items are excluded from
-    -- both the list AND the totals so remaining shares rebase. Account-wide
-    -- because it's a display preference, not character data. Cleared by the
-    -- Loot Log's "Unhide All" button.
-    if type(ADB.lootLogHidden) ~= "table" then
-        ADB.lootLogHidden = {}
     end
     -- v2.49.0: chance-on-hit procLine -> PE spellID map, populated by the
     -- on-the-fly autolearn (bag-diff snapshot + LEARNED_SPELL_IN_TAB
@@ -954,35 +886,45 @@ local function EnsureDB()
         charNS.enabled = EbonClearanceDB.enabled
     end
 
-    -- v2.72.0 settings-profile migration. Runs BEFORE the proxy build so
-    -- it reads the RAW top-level values. One-shot seed: the "Default"
-    -- profile is a deep copy of the current account-wide selling
-    -- settings, and every character starts pointed at it - zero
-    -- behaviour change on upgrade. The top-level copies freeze from here
-    -- on (downgrade safety net, same model as the v2.34 partition); all
-    -- live reads/writes route through the proxy into the active profile.
-    -- Fresh installs seed an empty Default that the nil-default blocks
-    -- below fill through the proxy.
-    if type(EbonClearanceDB.settingsProfiles) ~= "table" then
-        EbonClearanceDB.settingsProfiles = {}
-    end
-    if type(EbonClearanceDB.settingsProfiles.Default) ~= "table" then
-        local def = {}
-        for f in pairs(EC_compCache.settingsProfileFields) do
-            if EbonClearanceDB[f] ~= nil then
-                def[f] = EC_DBDeepCopy(EbonClearanceDB[f])
+    -- Feature cut: flatten the character's active settings profile onto
+    -- the per-character namespace once. The old settingsProfiles table stays
+    -- in SavedVariables untouched (downgrade-safe). After this, the proxy
+    -- is two-tier only (per-character / top-level account).
+    if not charNS._settingsProfilesFlattened then
+        local profiles = EbonClearanceDB.settingsProfiles
+        local body = nil
+        if type(profiles) == "table" then
+            body = profiles[charNS.activeSettingsProfile or "Default"] or profiles.Default
+        end
+        if type(body) == "table" then
+            for f, v in pairs(body) do
+                if PER_CHAR_FIELDS[f] and charNS[f] == nil then
+                    charNS[f] = EC_DBDeepCopy(v)
+                end
             end
         end
-        EbonClearanceDB.settingsProfiles.Default = def
-    end
-    if type(charNS.activeSettingsProfile) ~= "string" then
-        charNS.activeSettingsProfile = "Default"
+        -- Also seed from frozen top-level legacy values when the profile
+        -- (or the whole settingsProfiles table) lacked a field.
+        for f in pairs(PER_CHAR_FIELDS) do
+            if charNS[f] == nil and EbonClearanceDB[f] ~= nil
+                and f ~= "blacklist" and f ~= "whitelist" and f ~= "deleteList"
+                and f ~= "blacklistAuto" and f ~= "whitelistProfiles"
+                and f ~= "blacklistProfiles" and f ~= "activeProfileName"
+                and f ~= "processIgnored" and f ~= "processCollapsedModes"
+                and f ~= "processEnabledModes" and f ~= "lootedItemCounts"
+                and f ~= "helpSectionsCollapsed" and f ~= "activeSettingsProfile"
+                and f ~= "bestGPH" and f ~= "bestGPHAt" and f ~= "bestGPHZone"
+                and f ~= "enabled"
+            then
+                charNS[f] = EC_DBDeepCopy(EbonClearanceDB[f])
+            end
+        end
+        charNS._settingsProfilesFlattened = true
     end
 
     -- DB is a metatable proxy so existing call sites (`DB.foo`) keep
     -- working unchanged. Per-character fields route to chars[charKey];
-    -- settings-profile fields route to the character's active settings
-    -- profile; everything else stays on the top-level (account-wide) table.
+    -- everything else stays on the top-level (account-wide) table.
     DB = EC_DBBuildProxy(charNS)
     -- Mirror the live DB binding onto the namespace so split files can
     -- read NS.DB inline at call time. Same proxy; both names alias it.
@@ -1559,42 +1501,16 @@ local function EnsureDB()
             -- aren't reliably populated at ADDON_LOADED time.
             EC_compCache.pendingFreshInstallSync = true
         end
-        -- v2.12.0: arm the first-run welcome message + setup popup.
-        -- Persisted via DB._needsWelcome (not session-scoped) so a
-        -- /reload between ADDON_LOADED and PLAYER_LOGIN doesn't lose it.
-        -- Existing characters never reach this branch because their
-        -- EbonClearanceDB existed before the session and isFreshInstall
-        -- is false. The flag is consumed (set to nil) by the
-        -- PLAYER_LOGIN handler after the welcome fires.
-        if isFreshInstall then
-            -- v2.38.0: fresh installs auto-open the Quickstart panel at
-            -- PLAYER_LOGIN. Renamed from the v2.12.0 `_needsWelcome` flag
-            -- (which fired a 2-button popup pointing at the Main panel)
-            -- to make the intent explicit: open the wizard directly.
-            DB._needsQuickstartOpen = true
-        end
     end
-    -- v2.38.0: one-shot migration from v2.37.x. If an upgrader had the
-    -- old _needsWelcome flag set (installed but never logged in), promote
-    -- it to _needsQuickstartOpen so the wizard fires on their first
-    -- v2.38.0 login. Clear the stale field either way.
+    -- Feature cut: clear stale Quickstart / welcome flags if present.
     if DB._needsWelcome ~= nil then
-        if DB._needsWelcome == true then
-            DB._needsQuickstartOpen = true
-        end
         DB._needsWelcome = nil
     end
-    -- v2.38.0: Quickstart bookkeeping. _activeQuickstartPreset stores
-    -- the most-recently-applied preset key (or nil for tailored answers)
-    -- so the panel can render the "Active" tag. _previousQuickstartSnapshot
-    -- captures the settings as they were just before the last Apply for
-    -- one-step undo.
-    if DB._activeQuickstartPreset ~= nil and type(DB._activeQuickstartPreset) ~= "string" then
-        DB._activeQuickstartPreset = nil
+    if DB._needsQuickstartOpen ~= nil then
+        DB._needsQuickstartOpen = nil
     end
-    if DB._previousQuickstartSnapshot ~= nil and type(DB._previousQuickstartSnapshot) ~= "table" then
-        DB._previousQuickstartSnapshot = nil
-    end
+    DB._activeQuickstartPreset = nil
+    DB._previousQuickstartSnapshot = nil
     if type(DB.autoProtectUpgrades) ~= "boolean" then
         DB.autoProtectUpgrades = false
     end
@@ -1721,11 +1637,9 @@ local function EnsureDB()
     -- rule chain would sell at the next vendor visit. Texture sits on a
     -- frame-overlay sublevel ABOVE the slot's quality-border but does not
     -- draw on the icon itself, so the icon canvas stays untouched.
-    -- Off by default; users opt in via the Character Settings panel and
-    -- pick their own colour through the standard colour-picker dialog.
-    if type(DB.sellBorderEnabled) ~= "boolean" then
-        DB.sellBorderEnabled = false
-    end
+    -- Always on. The Item Highlighting options panel is gone; every
+    -- listing-status category paints with its default (or saved) colour.
+    DB.sellBorderEnabled = true
     if type(DB.sellBorderColor) ~= "table" then
         DB.sellBorderColor = { r = 1.0, g = 0.82, b = 0.0, a = 0.9 }
     else
@@ -1750,13 +1664,12 @@ local function EnsureDB()
         c.b = clamp01(c.b, 0.0)
         c.a = clamp01(c.a, 0.9)
     end
-    -- v2.30.x: per-category sell-border colours. Five distinct sell /
-    -- delete verdicts each get their own enable toggle + colour so the
-    -- user can see WHY a slot would clear at a glance. The legacy
-    -- DB.sellBorderColor field stays in the SV (ignored by the new
-    -- paint path) so a downgrade to v2.29.x doesn't lose the user's
-    -- previous colour pick. New installs and existing-but-unmigrated
-    -- saves both land on the five-category default set.
+    -- v2.30.x: per-category sell-border colours. Each listing-status
+    -- verdict paints with its own colour so the player can see WHY a
+    -- slot would clear at a glance. All categories are forced on (the
+    -- options panel is gone). The legacy DB.sellBorderColor field stays
+    -- in the SV (ignored by the paint path) so a downgrade to v2.29.x
+    -- doesn't lose a previous colour pick.
     if type(DB.sellBorderCategories) ~= "table" then
         DB.sellBorderCategories = {}
     end
@@ -1766,34 +1679,13 @@ local function EnsureDB()
         end
         local CAT_DEFAULTS = {
             delete = defaultCat(1.0, 0.20, 0.20, 0.9), -- red - highest visibility
-            -- v2.37.0: Keep List verdict. Soft cool white, distinct from
-            -- the warm-toned sell verdicts. Reads as "pristine /
-            -- protected" - the visual-reassurance use case from
-            -- docs/specs/2026-05-28-keep-highlighting-design.md.
-            -- Default OFF: every existing category defaults ON, but
-            -- Keep is opt-in so the player picks up no NEW slot colour
-            -- on the v2.37.0 upgrade unless they explicitly enable it.
-            -- This matches the v2.37.0 principle of "don't change
-            -- existing players' setups without their action".
-            keep = { enabled = false, color = { r = 0.95, g = 0.95, b = 1.00, a = 0.9 } },
+            keep = defaultCat(0.95, 0.95, 1.00, 0.9), -- soft cool white
             accountSell = defaultCat(0.4, 1.0, 0.4, 0.9), -- bright green
             charSell = defaultCat(0.4, 0.7, 1.0, 0.9), -- cyan / sky blue
             junk = defaultCat(0.7, 0.7, 0.7, 0.7), -- low-alpha grey
             rule = defaultCat(1.0, 0.82, 0.0, 0.9), -- gold (matches v2.29 single-colour default)
-            -- v2.37.5: random-affix items get their own at-a-glance
-            -- marker so the player can spot affixed drops in bags
-            -- without hovering each one. Default OFF (opt-in, like
-            -- Keep List). Purple maps to the "magical / corruption"
-            -- visual idiom; distinct from the warm-toned sell verdicts
-            -- and the cool-toned Keep List.
-            affix = { enabled = false, color = { r = 0.78, g = 0.40, b = 1.00, a = 0.9 } },
-            -- v2.52.0: complementary to `affix`. Fires when the bag
-            -- item carries a random affix the player does NOT own
-            -- (any of description / rank / family). Gold-ish default
-            -- signals "wanted / target for extraction" without
-            -- clashing with the warm-toned sell family or the purple
-            -- Known Affix. Default OFF (opt-in like Keep + Known Affix).
-            affixneeded = { enabled = false, color = { r = 1.00, g = 0.85, b = 0.20, a = 0.9 } },
+            affix = defaultCat(0.78, 0.40, 1.00, 0.9), -- purple Known Affix
+            affixneeded = defaultCat(1.00, 0.85, 0.20, 0.9), -- gold Needed Affix
         }
         local function clamp01b(v, fallback)
             if type(v) ~= "number" or v ~= v then
@@ -1811,13 +1703,13 @@ local function EnsureDB()
             local existing = DB.sellBorderCategories[cat]
             if type(existing) ~= "table" then
                 DB.sellBorderCategories[cat] = {
-                    enabled = def.enabled,
+                    enabled = true,
                     color = { r = def.color.r, g = def.color.g, b = def.color.b, a = def.color.a },
                 }
             else
-                if type(existing.enabled) ~= "boolean" then
-                    existing.enabled = def.enabled
-                end
+                -- Options UI removed: every category stays on. Saved
+                -- colours are kept; a missing/corrupt channel is repaired.
+                existing.enabled = true
                 if type(existing.color) ~= "table" then
                     existing.color =
                         { r = def.color.r, g = def.color.g, b = def.color.b, a = def.color.a }
@@ -1831,11 +1723,10 @@ local function EnsureDB()
         end
     end
     -- Opt-in tooltip annotation: append the numeric item ID under the EC
-    -- status line on bag-item / item-link tooltips. Useful for filing bug
-    -- reports and for authoring Keep / Sell / Delete entries by ID. Off
-    -- by default; users opt in via the Item Highlighting panel. The line
-    -- rides the same OnTooltipSetItem hook EC already installs, so there
-    -- is no extra hook cost when the toggle is off.
+    -- status line on bag-item / item-link tooltips. Off by default and no
+    -- longer exposed in the UI (Item Highlighting panel removed). The
+    -- line rides the same OnTooltipSetItem hook EC already installs, so
+    -- there is no extra hook cost when the toggle is off.
     if type(DB.showItemIDOnTooltip) ~= "boolean" then
         DB.showItemIDOnTooltip = false
     end
@@ -1964,16 +1855,6 @@ local EC_session = {
 }
 NS.session = EC_session
 
--- Session loot ledger. Keyed by itemID -> total quantity looted this
--- session. In-memory only (clears on /reload and Reset Session). This is
--- an AGGREGATE, not an event log: storage is one small integer per
--- distinct item, so it stays bounded no matter how long the farm runs.
--- The persisted account-wide running total lives in
--- ADB.accountStats.lootedItemCounts (see EC_BumpLoot). Exposed on NS so
--- the Stats panel's loot window can read it.
-local EC_lootSession = {}
-NS.lootSession = EC_lootSession
-
 local function EC_ResetSession()
     EC_session.copper = 0
     EC_session.sold = 0
@@ -1981,38 +1862,8 @@ local function EC_ResetSession()
     EC_session.repairs = 0
     EC_session.repairCopper = 0
     EC_session.startedAt = GetTime()
-    -- Wipe the session loot ledger in place (keep the same table object so
-    -- NS.lootSession references held by the loot window stay valid).
-    for k in pairs(EC_lootSession) do
-        EC_lootSession[k] = nil
-    end
 end
 NS.ResetSession = EC_ResetSession
-
--- Clear one scope of the loot ledger. "session" wipes the in-memory
--- session table; "account" wipes the persisted account-wide bucket. Both
--- wipe in place so existing table references stay valid.
-local function EC_ClearLoot(scope)
-    if scope == "account" then
-        local AS = ADB and ADB.accountStats
-        if AS and AS.lootedItemCounts then
-            for k in pairs(AS.lootedItemCounts) do
-                AS.lootedItemCounts[k] = nil
-            end
-        end
-    elseif scope == "character" then
-        if DB and DB.lootedItemCounts then
-            for k in pairs(DB.lootedItemCounts) do
-                DB.lootedItemCounts[k] = nil
-            end
-        end
-    else
-        for k in pairs(EC_lootSession) do
-            EC_lootSession[k] = nil
-        end
-    end
-end
-NS.ClearLoot = EC_ClearLoot
 
 -- v2.38.1: every per-character stat write mirrors into ADB.accountStats
 -- so the Stats panel's Account view aggregates totals across all
@@ -2046,105 +1897,6 @@ local function EC_BumpStatBucket(bucket, key, delta)
         ADB.accountStats[bucket] = ADB.accountStats[bucket] or {}
         ADB.accountStats[bucket][key] = (ADB.accountStats[bucket][key] or 0) + delta
     end
-end
-
--- Session loot tracker bump. Writes the in-memory session ledger and the
--- persisted account-wide running total. Deliberately NOT routed through
--- EC_BumpStat / EC_BumpStatBucket: those also mirror into a per-character
--- DB bucket, but loot tracking is session + account only (no per-character
--- lifetime view by design). Aggregate per itemID, so it never grows into
--- an event log.
-local function EC_BumpLoot(itemID, qty)
-    if not itemID then
-        return
-    end
-    qty = qty or 1
-    if qty <= 0 then
-        return
-    end
-    EC_lootSession[itemID] = (EC_lootSession[itemID] or 0) + qty
-    if DB then
-        DB.lootedItemCounts = DB.lootedItemCounts or {}
-        DB.lootedItemCounts[itemID] = (DB.lootedItemCounts[itemID] or 0) + qty
-    end
-    if ADB and ADB.accountStats then
-        ADB.accountStats.lootedItemCounts = ADB.accountStats.lootedItemCounts or {}
-        ADB.accountStats.lootedItemCounts[itemID] = (ADB.accountStats.lootedItemCounts[itemID] or 0) + qty
-    end
-    -- v2.50.1: mark the Loot Log window for refresh. Its OnUpdate rebuilds
-    -- on this flag (throttled) instead of unconditionally every second, so
-    -- an open window costs nothing while no new loot is arriving.
-    EC_compCache.lootWindowDirty = true
-end
-
--- Loot capture. We track NET BAG INCREASES rather than parsing
--- CHAT_MSG_LOOT, because the Greedy Scavenger pet drops its haul straight
--- into your bags without firing a "you receive loot" chat line - so chat
--- parsing only ever saw what the PLAYER looted by hand. A bag-delta scan
--- catches every source uniformly: manual loot, the auto-loot cycle, AND
--- the Scavenger. Summing per itemID across all bags means moving or
--- splitting stacks nets to zero (no false count); only genuine increases
--- are recorded.
---
--- Runs from the BAG_UPDATE debounce flush (already coalesced for the
--- Scavenger's rapid multi-item bursts), so it costs one bag walk per
--- settled burst - no tooltip scans. To avoid counting non-loot inflows
--- (vendor buys / buybacks, bank or mail withdrawals, trade, auction,
--- crafting output), the scan only DIFFS when no transactional window is
--- open; while one is open it just re-baselines the snapshot so the next
--- open-world loot diffs against the right starting point.
-local EC_lootBagSnapshot = {}
-local EC_lootSnapshotReady = false
-
--- Frame NAMES (not refs) for the windows through which items legitimately
--- enter bags without being "loot". Looked up via _G at call time because
--- several are load-on-demand (GuildBankFrame, TradeFrame, AuctionFrame,
--- TradeSkillFrame, CraftFrame are nil until first opened) - and a table of
--- frame refs with nil holes would make ipairs stop at the first nil,
--- silently skipping every frame after it (the v2.46.0 bug where mailbox
--- takes were counted because GuildBankFrame was nil and short-circuited
--- the scan of MailFrame). QuestFrame / GossipFrame cover quest-reward and
--- gossip-vendor item grants.
-local EC_LOOT_TXN_FRAMES = {
-    "MerchantFrame",
-    "BankFrame",
-    "GuildBankFrame",
-    "MailFrame",
-    "OpenMailFrame",
-    "TradeFrame",
-    "AuctionFrame",
-    "TradeSkillFrame",
-    "CraftFrame",
-    "QuestFrame",
-    "GossipFrame",
-}
-
--- True while a window is open through which items legitimately enter bags
--- without being "loot" (so we shouldn't count the delta as looted).
-local function EC_LootTransactionWindowOpen()
-    for i = 1, #EC_LOOT_TXN_FRAMES do
-        local f = _G[EC_LOOT_TXN_FRAMES[i]]
-        if f and f.IsShown and f:IsShown() then
-            return true
-        end
-    end
-    return false
-end
-
--- Build a fresh { itemID = totalCount } snapshot across bags 0-4.
-local function EC_BuildBagSnapshot()
-    local snap = {}
-    for bag = 0, 4 do
-        local slots = GetContainerNumSlots(bag) or 0
-        for slot = 1, slots do
-            local id = GetContainerItemID(bag, slot)
-            if id then
-                local _, count = GetContainerItemInfo(bag, slot)
-                snap[id] = (snap[id] or 0) + (count or 1)
-            end
-        end
-    end
-    return snap
 end
 
 -- v2.59.0: shared per-flush bag snapshot. The settled BAG_UPDATE flush used
@@ -2214,36 +1966,6 @@ function EC_compCache.acquireFlushSnapshot()
     snap = EC_compCache.buildBagFlushSnapshot()
     EC_compCache.flushSnapshot = snap
     return snap
-end
-
--- v2.49.0: equipped snapshot for the unequip guard on EC_ScanLootDelta.
--- Reported by Serv: unequipping a worn item counts it as loot because
--- the item moves from an equipment slot to a bag slot, showing as a
--- new bag delta. Comparing this snapshot across scan runs lets us
--- detect "was equipped last scan, isn't now" and subtract that itemID
--- from the positive bag delta before crediting as loot. Standard
--- inventory slots 1-19 (INVSLOT_HEAD through INVSLOT_TABARD).
-local EC_lootEquippedSnapshot = {}
--- v2.68.1: double-buffer. The scan fills the spare, diffs it against the
--- baseline, then the two tables SWAP - so this always-on BAG_UPDATE-path
--- consumer stops allocating a fresh 19-slot table (plus the `unequipped`
--- scratch below) every settled burst. Same wipe-and-reuse pattern as
--- EC_manualSell.snapshotBags. On EC_compCache, not file-scope locals:
--- the main chunk sits at Lua 5.1's 200-locals cap.
-EC_compCache.lootEquippedSpare = {}
-EC_compCache.lootUnequippedScratch = {}
-local function EC_BuildEquippedSnapshot(into)
-    wipe(into)
-    if not GetInventoryItemID then
-        return into
-    end
-    for slot = 1, 19 do
-        local id = GetInventoryItemID("player", slot)
-        if id then
-            into[id] = (into[id] or 0) + 1
-        end
-    end
-    return into
 end
 
 -- v2.49.1: chance-on-hit removal ring buffer. Rolling 5-second window
@@ -2401,125 +2123,6 @@ local function EC_TryAutolearnFromLearnedSpell(spellID, family, source)
     end
 end
 NS.TryAutolearnFromLearnedSpell = EC_TryAutolearnFromLearnedSpell
-
--- Diff current bags against the last snapshot and record positive deltas as
--- looted. Called from the BAG_UPDATE debounce flush. The first call after
--- login / reload only baselines (existing bag contents are not "loot").
-local function EC_ScanLootDelta()
-    -- Master enable gate, consistent with the other debounce-driven scans.
-    if NS.IsAddonEnabledForChar and not NS.IsAddonEnabledForChar() then
-        return
-    end
-    -- Skip entirely while an item is on the cursor: a bag reorganise picks
-    -- an item up (total count drops) then drops it back (count returns).
-    -- Leaving the snapshot untouched until the cursor clears means the
-    -- round-trip nets to zero instead of crediting a phantom +1. Any real
-    -- loot that lands while the cursor is busy is caught on the next scan.
-    if CursorHasItem and CursorHasItem() then
-        return
-    end
-    -- v2.59.0: reuse the shared flush snapshot's {itemID = count} map when
-    -- inside a flush (saves a second full bag walk); standalone calls keep
-    -- building their own. The shared map is never mutated after build, so
-    -- retaining it as the next baseline (bottom of this function) is safe.
-    local sharedSnap = EC_compCache.currentFlushSnapshot()
-    local snap = sharedSnap and sharedSnap.counts or EC_BuildBagSnapshot()
-    -- While a transactional window is open, or on the very first scan, just
-    -- re-baseline without crediting any delta as loot.
-    if not EC_lootSnapshotReady or EC_LootTransactionWindowOpen() then
-        EC_lootBagSnapshot = snap
-        EC_BuildEquippedSnapshot(EC_lootEquippedSnapshot)
-        EC_lootSnapshotReady = true
-        return
-    end
-    -- v2.49.0: unequip guard. Reported by Serv - unequipping a worn
-    -- item moves it from an equipment slot to a bag slot, showing as
-    -- a positive bag delta and getting credited as loot. Diff the
-    -- equipped snapshot vs the previous run and build a per-itemID
-    -- "just unequipped" count. Subtract from the bag delta before
-    -- crediting. Equipping (bag -> slot) doesn't trigger a positive
-    -- bag delta so no equivalent guard needed on that side.
-    local equippedNow = EC_BuildEquippedSnapshot(EC_compCache.lootEquippedSpare)
-    local unequipped = EC_compCache.lootUnequippedScratch
-    wipe(unequipped)
-    for id, prevEq in pairs(EC_lootEquippedSnapshot) do
-        local nowEq = equippedNow[id] or 0
-        if nowEq < prevEq then
-            unequipped[id] = prevEq - nowEq
-        end
-    end
-    -- v2.46.6: skip items the addon is about to destroy. Reported by Broyo:
-    -- looted PvP-Resilience items left "item:XXXXX" ghost rows in the Loot
-    -- Log because the auto-mark-resilience + auto-delete-on-pickup pair
-    -- runs earlier in the same debounce burst, but the actual delete is
-    -- one-per-cycle (popup serialisation invariant). Newly-marked items
-    -- are still in bags when ScanLootDelta runs, then disappear on the
-    -- next burst - leaving a row whose GetItemInfo hadn't yet resolved
-    -- the name. EC-TRAP: must check BOTH enableDeletion AND
-    -- autoDeleteOnPickup. With autoDeleteOnPickup off, items on the
-    -- Delete List stay in bags until the player vendors them, so they
-    -- ARE genuine loot the player handled and SHOULD count.
-    local skipDeleteListed = DB and DB.enableDeletion and DB.autoDeleteOnPickup
-    local deleteList = skipDeleteListed and DB.deleteList or nil
-    for id, count in pairs(snap) do
-        local prev = EC_lootBagSnapshot[id] or 0
-        if count > prev then
-            local delta = count - prev
-            -- v2.49.0: subtract items just unequipped so a worn->bag
-            -- transition doesn't count as loot.
-            local unequipDelta = unequipped[id] or 0
-            local netDelta = delta - unequipDelta
-            -- NS.IsInSet rather than the file-local IsInSet because that
-            -- local is declared further down in the chunk (after this
-            -- function's definition point) and isn't a captured upvalue
-            -- here. Same membership semantics; one extra table lookup.
-            if netDelta > 0 and not (deleteList and NS.IsInSet(deleteList, id)) then
-                EC_BumpLoot(id, netDelta)
-            end
-        end
-    end
-    -- v2.49.1: log chance-on-hit item REMOVALS for autolearn correlation.
-    -- Walk the PREVIOUS snapshot for itemIDs whose count dropped this
-    -- scan; look up the cached procLine from EC_compCache.procLineByItemID
-    -- (populated during prior chanceProcLine calls before the item left);
-    -- push an entry into the ring buffer. Prune stale entries first so
-    -- the buffer never accumulates beyond the 5-second window.
-    EC_PruneChanceProcRemovals()
-    for id, prev in pairs(EC_lootBagSnapshot) do
-        local now = snap[id] or 0
-        if now < prev and EC_compCache.procLineByItemID and EC_compCache.procLineByItemID[id] then
-            local _, link = GetItemInfo(id)
-            EC_recentChanceProcRemovals[#EC_recentChanceProcRemovals + 1] = {
-                itemID = id,
-                itemName = link or ("item:" .. id),
-                procLine = EC_compCache.procLineByItemID[id],
-                removedAt = GetTime(),
-            }
-        end
-    end
-    EC_lootBagSnapshot = snap
-    -- Rotate the double-buffer: the just-built table becomes the baseline,
-    -- the old baseline becomes next scan's spare (wiped on fill).
-    EC_compCache.lootEquippedSpare = EC_lootEquippedSnapshot
-    EC_lootEquippedSnapshot = equippedNow
-end
-NS.ScanLootDelta = EC_ScanLootDelta
-
--- Keep bags open when merchant closes
-local EC_keepBagsFlag = false
-
-local function EC_OpenAllBags()
-    if OpenAllBags then
-        OpenAllBags()
-    elseif OpenBackpack then
-        OpenBackpack()
-        for i = 1, 4 do
-            if OpenBag then
-                OpenBag(i)
-            end
-        end
-    end
-end
 
 EC_GetPlayerName = function()
     local n = UnitName("player")
@@ -2746,156 +2349,6 @@ NS.SaveProfile = EC_SaveProfile
 NS.LoadProfile = EC_LoadProfile
 NS.DeleteProfile = EC_DeleteProfile
 NS.RenameProfile = EC_RenameProfile
-
--- ===========================================================================
--- v2.72.0 settings profiles (management).
--- ---------------------------------------------------------------------------
--- Unlike the list profiles above (per-character snapshots that Load COPIES
--- into the live lists), a settings profile is a LIVE body: the DB proxy
--- resolves every selling-behaviour read/write through the character's
--- active profile, so "Use" just moves the per-character pointer. Bodies
--- live at the top-level EbonClearanceDB.settingsProfiles[name] so alts
--- share a profile by pointing at the same name.
--- Defined directly on NS (no main-chunk locals - the 200-locals cap).
-
--- Re-fires the option panels + bag borders after the active settings
--- change under a panel's feet (same repaint set Quickstart uses).
-function NS.RepaintAfterSettingsSwitch()
-    if NS.RefreshSellBorders then
-        NS.RefreshSellBorders()
-    end
-    local panels = {
-        "EbonClearanceOptionsMain",
-        "EbonClearanceOptionsMerchant",
-        "EbonClearanceOptionsBlacklistSettings",
-        "EbonClearanceOptionsDeletionSettings",
-        "EbonClearanceOptionsSettingsProfiles",
-    }
-    for _, panelName in ipairs(panels) do
-        local p = _G[panelName]
-        if p and p.inited and p.GetScript and p:GetScript("OnShow") then
-            p:GetScript("OnShow")(p)
-        end
-    end
-end
-
--- Snapshot the character's CURRENT selling settings under `name` and
--- switch to it (mirror of EC_SaveProfile's save-then-activate shape).
--- v2.75.0 (fresh-audit fix): returns the cleaned profile name if a profile with
--- that (validated) name already exists, else nil. Lets the Profiles panel raise
--- an overwrite confirmation before Save replaces an existing profile's body.
-function NS.SettingsProfileExists(name)
-    local ok, cleaned = EC_ValidateProfileName(name)
-    if not ok then
-        return nil
-    end
-    local profiles = EbonClearanceDB and EbonClearanceDB.settingsProfiles
-    return (profiles and profiles[cleaned] ~= nil) and cleaned or nil
-end
-
-function NS.SaveSettingsProfile(name)
-    local ok, cleaned = EC_ValidateProfileName(name)
-    if not ok then
-        return false, cleaned
-    end
-    local profiles = EbonClearanceDB and EbonClearanceDB.settingsProfiles
-    if not profiles then
-        return false, L["Settings profiles are not ready yet."]
-    end
-    local snap = {}
-    for f in pairs(EC_compCache.settingsProfileFields) do
-        -- Reads route through the proxy, so this snapshots the values
-        -- the character is actually using right now.
-        snap[f] = EC_DBDeepCopy(DB[f])
-    end
-    profiles[cleaned] = snap
-    DB.activeSettingsProfile = cleaned
-    return true, string.format(L['Saved settings as "|cffffff00%s|r" - this character now uses it.'], cleaned)
-end
-
--- Point this character at an existing settings profile.
-function NS.UseSettingsProfile(name)
-    local profiles = EbonClearanceDB and EbonClearanceDB.settingsProfiles
-    if not (profiles and name and profiles[name]) then
-        return false, string.format(L['No settings profile named "|cffffff00%s|r".'], tostring(name))
-    end
-    if DB.activeSettingsProfile == name then
-        return true, string.format(L['Already using settings profile "|cffffff00%s|r".'], name)
-    end
-    DB.activeSettingsProfile = name
-    -- Re-run the idempotent bootstrap so a profile saved by an older
-    -- version picks up nil-defaults for fields added since (the defaults
-    -- write through the proxy into the newly-active profile).
-    EnsureDB()
-    NS.RepaintAfterSettingsSwitch()
-    return true, string.format(L['This character now uses settings profile "|cffffff00%s|r".'], name)
-end
-
-function NS.DeleteSettingsProfile(name)
-    if name == "Default" then
-        return false, L["The Default settings profile cannot be deleted."]
-    end
-    local profiles = EbonClearanceDB and EbonClearanceDB.settingsProfiles
-    if not (profiles and name and profiles[name]) then
-        return false, string.format(L['No settings profile named "|cffffff00%s|r".'], tostring(name))
-    end
-    profiles[name] = nil
-    -- Note whether THIS character used it before the walk below repoints
-    -- every namespace (the walk includes ours).
-    local repointedSelf = DB.activeSettingsProfile == name
-    -- Repoint every character that used it back to Default (the proxy
-    -- also falls back to Default at read time, but a live pointer to a
-    -- dead profile should not persist).
-    local chars = EbonClearanceDB.chars
-    if chars then
-        for _, charNS in pairs(chars) do
-            if charNS.activeSettingsProfile == name then
-                charNS.activeSettingsProfile = "Default"
-            end
-        end
-    end
-    if repointedSelf then
-        -- Covers the transient pre-login namespace too (not in chars).
-        DB.activeSettingsProfile = "Default"
-        NS.RepaintAfterSettingsSwitch()
-        return true,
-            string.format(L['Deleted settings profile "|cffffff00%s|r" - this character is back on Default.'], name)
-    end
-    return true, string.format(L['Deleted settings profile "|cffffff00%s|r".'], name)
-end
-
-function NS.RenameSettingsProfile(oldName, newName)
-    if oldName == "Default" then
-        return false, L["The Default settings profile cannot be renamed."]
-    end
-    local ok, cleaned = EC_ValidateProfileName(newName)
-    if not ok then
-        return false, cleaned
-    end
-    local profiles = EbonClearanceDB and EbonClearanceDB.settingsProfiles
-    if not (profiles and oldName and profiles[oldName]) then
-        return false, string.format(L['No settings profile named "|cffffff00%s|r".'], tostring(oldName))
-    end
-    if profiles[cleaned] then
-        return false, string.format(L['A settings profile named "|cffffff00%s|r" already exists.'], cleaned)
-    end
-    profiles[cleaned] = profiles[oldName]
-    profiles[oldName] = nil
-    local wasSelf = DB.activeSettingsProfile == oldName
-    local chars = EbonClearanceDB.chars
-    if chars then
-        for _, charNS in pairs(chars) do
-            if charNS.activeSettingsProfile == oldName then
-                charNS.activeSettingsProfile = cleaned
-            end
-        end
-    end
-    if wasSelf then
-        -- Covers the transient pre-login namespace too (not in chars).
-        DB.activeSettingsProfile = cleaned
-    end
-    return true, string.format(L['Renamed settings profile "|cffffff00%s|r" to "|cffffff00%s|r".'], oldName, cleaned)
-end
 
 local function CopperToColoredText(copper)
     if not copper or copper < 0 then
@@ -3128,16 +2581,15 @@ local function SummonGreedyScavenger()
         -- EC_addonDismissed=true and bailing out routes recovery
         -- through EC_TryResummonScavenger's tick path, which has
         -- the same busy gate plus retry-until-confirmed.
-        if EC_IsPlayerBusy() or (DB and DB.summonOnlyOutOfCombat and InCombatLockdown()) then
+        -- Settings cut: always summon only out of combat (checkbox removed).
+        if EC_IsPlayerBusy() or InCombatLockdown() then
             EC_compCache.addonDismissed = true
             -- v2.10.0: arm the resummon-print debounce so the eventual
             -- pet-tick retry that catches a clear cast/movement window
             -- prints once. Without this, FinishRun-initiated summons that
-            -- bounce off the busy gate would silently recover. v2.11.0
-            -- extends the gate with the optional combat-only setting:
-            -- when DB.summonOnlyOutOfCombat is true, defer the summon
-            -- until combat ends. The pet-tick retry path picks it up
-            -- the moment InCombatLockdown clears.
+            -- bounce off the busy gate would silently recover. Settings cut:
+            -- combat deferral is always on; the pet-tick retry path picks
+            -- it up the moment InCombatLockdown clears.
             EC_compCache.pendingAnnounce = true
             return
         end
@@ -3330,7 +2782,8 @@ local function EC_SummonGreedyWithDelay()
     if not DB or not DB.summonGreedy then
         return
     end
-    EC_Delay((DB and DB.summonDelay) or 1.6, SummonGreedyScavenger)
+    -- Settings cut: fixed summon delay (slider removed).
+    EC_Delay(1.6, SummonGreedyScavenger)
 end
 
 local function EC_GetFreeBagSlots()
@@ -3366,41 +2819,20 @@ NS.GetFreeBagSlots = EC_GetFreeBagSlots
 -- certainly outpaced the leash.
 local EC_STUCK_MOVEMENT_THRESHOLD = 180
 
--- Fast Mode: when enabled, pin the per-item vendor interval to the 0.05 s
--- floor and double the per-run cap. Opt-in via DB.fastMode.
+-- Settings cut: fixed sell pace. Ignore Fast Mode, Turbo Mode, and the
+-- player interval slider (docs/SCOPE_CUT.md).
+local EC_FIXED_VENDOR_INTERVAL = 0.1
+local EC_FIXED_MAX_ITEMS_PER_RUN = 80
+
 local function EC_EffectiveVendorInterval()
-    if DB and DB.fastMode then
-        return 0.05
-    end
-    local i = (DB and DB.vendorInterval) or 0.1
-    if i < 0.05 then
-        i = 0.05
-    end
-    return i
+    return EC_FIXED_VENDOR_INTERVAL
 end
 
 local function EC_EffectiveMaxItemsPerRun()
-    if DB and DB.fastMode then
-        return 160
-    end
-    return (DB and DB.maxItemsPerRun) or 80
+    return EC_FIXED_MAX_ITEMS_PER_RUN
 end
 
--- v2.37.7: Turbo Mode pops multiple items off the queue per worker fire
--- so a bag clear finishes in a fraction of the time. Stacks with Fast
--- Mode: with both on the effective rate is 4 / 0.05 = 80 items/sec.
--- Standalone Turbo with default 0.1 s interval = 40 items/sec. The
--- batch size is deliberately small (4) so the per-frame UseContainerItem
--- burst stays well inside what server-side rate limiting will accept;
--- the per-run cap still applies. Surfaced in the Merchant panel; the
--- effective items/sec readout under the slider reflects the current
--- combination.
-local TURBO_BATCH_SIZE = 4
-
 local function EC_EffectiveBatchSize()
-    if DB and DB.turboMode then
-        return TURBO_BATCH_SIZE
-    end
     return 1
 end
 
@@ -3434,28 +2866,6 @@ local EC_goblinRetryCount = 0
 local EC_GOBLIN_MAX_RETRIES = 3
 local EC_merchantReminderPending = false
 local EC_merchantReminderTimer = 0
--- Auto-open container in-flight flag. Same forward-declaration discipline as
--- the timers above: EC_HandleAutoOpenContainers writes this, and we don't want
--- the write to leak into _G if the function is parsed before the local exists.
-local EC_autoOpenInFlight = false
-
--- v2.21.0: Fast Loot queue state hung off EC_compCache to stay under
--- Lua 5.1's 200-locals-per-main-chunk cap (CLAUDE.md discipline). The
--- queue replaces v2.16.0's tight-loop drain with a slot-index queue
--- that drains via OnUpdate throttle, reducing per-frame LootSlot
--- pressure to mitigate disconnect risk on busy 3.3.5a private
--- servers. EC_compCache.lootQueue is initialised here so the OnUpdate
--- driver (built lazily in EC_HandleLootReady) can reach it via
--- EC_compCache. Resets naturally on /reload and on every LOOT_READY
--- (re-population wipes + refills).
-EC_compCache.lootQueue = {
-    slots = {},
-    isProcessing = false,
-    lastLootAt = 0,
-    delay = 0.11, -- 110 ms; matches the reference implementation's default
-    frame = nil, -- built lazily in EC_HandleLootReady on first call
-}
-
 -- Auto-loot cycle: react to bag-full as soon as the game tells us a bag
 -- changed. Same body as the old 5-second poll; called from BAG_UPDATE so the
 -- Goblin Merchant is summoned within a tick of the threshold being crossed.
@@ -3672,15 +3082,6 @@ function EC_compCache.scanItemID(itemID)
     return EC_scanTooltip
 end
 
--- Forward declaration so the debounce frame's OnUpdate closure below
--- can resolve the name. Without this, Lua's lexical scoping resolves
--- the reference to the (nil) global at closure-creation time and the
--- auto-open driver never fires from the debounce path. v2.24.0 perf
--- regression discovered post-v2.25.0 when locked boxes that the user
--- opened via Process Bags weren't being auto-opened by the debounce.
--- Function body still lives at its original spot below.
-local EC_HandleAutoOpenContainers
-
 -- v2.24.0: BAG_UPDATE coalescing frame. The Greedy Scavenger looting
 -- 5 items in <100 ms fires 5 BAG_UPDATE events; running the full
 -- deferred-work chain (auto-open containers, upgrade scan, Process
@@ -3863,8 +3264,8 @@ EC_compCache.bagUpdateFrame:SetScript("OnUpdate", function(self, elapsed)
     end
     self:Hide()
     EC_compCache.bagUpdatePending = false
-    -- Frame-spike timing: the whole settled-burst flush (loot-delta scan
-    -- included) is the "bag update" phase.
+    -- Frame-spike timing: the whole settled-burst flush is the "bag update"
+    -- phase.
     local _spikeT0 = EC_prof and EC_prof()
     EC_StampEvent("bagUpdate")
     -- v2.75.0 (fresh-audit fix): resolve any deferred external-delete candidate
@@ -3875,18 +3276,11 @@ EC_compCache.bagUpdateFrame:SetScript("OnUpdate", function(self, elapsed)
     -- v2.63.0: the shared bag snapshot is now acquired LAZILY - the first
     -- scanner below that actually runs builds it via
     -- EC_compCache.acquireFlushSnapshot() and later scanners in this same
-    -- frame reuse it. With every entries-consumer toggled off (the default
-    -- config) no snapshot is built at all; the loot delta falls back to
-    -- its cheap flat {itemID = count} walk.
+    -- frame reuse it. With every entries-consumer toggled off no snapshot
+    -- is built at all.
     -- Burst settled. Fire the deferred work once.
-    if EC_HandleAutoOpenContainers then
-        EC_HandleAutoOpenContainers()
-    end
     if EC_compCache.checkBagsForUpgrades then
         EC_compCache.checkBagsForUpgrades()
-    end
-    if EC_compCache.rearmProcessButton then
-        EC_compCache.rearmProcessButton()
     end
     -- v2.26.0: cheap dirty-check rebuild of the known-affix /
     -- known-proc description map. Skips the rebuild when the player's
@@ -3896,68 +3290,6 @@ EC_compCache.bagUpdateFrame:SetScript("OnUpdate", function(self, elapsed)
     if EC_compCache.refreshExtractionIfDirty then
         EC_compCache.refreshExtractionIfDirty()
     end
-    local pbp = _G["EbonClearanceOptionsProcessBags"]
-    if pbp and pbp:IsShown() and EC_compCache.refreshProcessPanel then
-        EC_compCache.refreshProcessPanel()
-    end
-    -- v2.30.x: repaint slot-border tints after the bag burst settles.
-    -- The host bag UI's per-slot Update hook fires immediately during
-    -- a move - while the slot is still locked - and NS.IsSellable
-    -- bails on locked items, so the category resolver returns nil and
-    -- the tint hides. For list-based categories (delete / account
-    -- sell / character sell) the host's follow-up UpdateBorder often
-    -- catches things up via the search-fade path, but rule-category
-    -- items (which depend entirely on qualityPass via NS.IsSellable)
-    -- don't always get a second pass. Refreshing here after the
-    -- 120 ms idle ensures the locked state has cleared by the time
-    -- the final paint runs. The refresh iterates only tracked buttons
-    -- (weak-keyed registry) so the cost is one category lookup per
-    -- visible bag slot - bounded by the user's open bag count.
-    if NS.RefreshSellBorders then
-        NS.RefreshSellBorders()
-    end
-    -- v2.42.0: auto-delete-on-pickup runs from the debounce (NOT the raw
-    -- BAG_UPDATE branch) so the coalescing invariant holds.
-    if EC_compCache.runAutoDeleteOnPickup then
-        EC_compCache.runAutoDeleteOnPickup()
-    end
-    -- v2.44.0: auto-mark Resilience PvP gear for deletion. Runs from
-    -- the same debounce so the BAG_UPDATE coalescing applies. The
-    -- helper itself routes through EC_IsAddonEnabledForChar so the
-    -- master Enable toggle vetoes consistently with every other
-    -- destructive path.
-    if EC_compCache.runAutoMarkResilience then
-        EC_compCache.runAutoMarkResilience()
-    end
-    -- v2.47.0: auto-mark unsellable affix dupes (soulbound, owned affix, no
-    -- vendor value) for deletion. Same debounce + master-gate discipline as
-    -- the resilience auto-mark above.
-    if EC_compCache.runAutoMarkAffixDupes then
-        EC_compCache.runAutoMarkAffixDupes()
-    end
-    -- v2.60.0: auto-mark learned recipes with sellPrice 0 (Sell Known Recipes
-    -- can't move them; they'd sit in bags forever). Same debounce + master-
-    -- gate discipline as the two auto-marks above.
-    if EC_compCache.runAutoMarkKnownUnsellableRecipes then
-        EC_compCache.runAutoMarkKnownUnsellableRecipes()
-    end
-    -- Loot tracker bag-delta scan. Runs last in the flush: auto-delete-on-
-    -- pickup confirms its delete asynchronously (via the delete popup on a
-    -- later tick), so a just-looted Delete-List item is still in bags when
-    -- this scan runs and gets counted before the async delete removes it on
-    -- a subsequent burst.
-    if EC_ScanLootDelta then
-        EC_ScanLootDelta()
-    end
-    -- v2.49.2: grey auto-delete. Runs LAST in the flush - after the
-    -- loot-delta scan above - so a just-looted grey is counted as loot
-    -- before the (synchronous, no-popup) delete removes it. Opt-in via
-    -- DB.autoDeleteGreyOnLoot; self-gates on the master Enable +
-    -- enableDeletion. One delete per burst; the delete re-fires the
-    -- debounce for the next.
-    if EC_compCache.runAutoDeleteGrey then
-        EC_compCache.runAutoDeleteGrey()
-    end
     -- Drop the shared snapshot reference; the frame stamp already stops
     -- cross-frame reuse, this just lets the tables GC promptly.
     EC_compCache.flushSnapshot = nil
@@ -3965,150 +3297,6 @@ EC_compCache.bagUpdateFrame:SetScript("OnUpdate", function(self, elapsed)
         EC_spikePhase.bagupdate = EC_spikePhase.bagupdate + (EC_prof() - _spikeT0)
     end
 end)
-
--- True iff the slotted item shows ITEM_OPENABLE in its tooltip and is not
--- locked. ITEM_OPENABLE is the standard Blizzard locale string ("<Right
--- Click to Open>" in enUS) used by every container, gift bag, and
--- treasure pouch in 3.3.5a. LOCKED is the same string that gets shown on
--- junkboxes / lockpickable containers; we exclude those because the user
--- needs a key or lockpicking skill to open them.
-local function EC_IsOpenable(bag, slot)
-    -- v2.59.0: per-itemID cache. "never" skips the slot with zero API calls.
-    -- v2.59.3 fix (Serv report, lockbox auto-open loop): we NO LONGER cache
-    -- "openable" per-itemID. Bug scenario: rogue Pick Lock unlocks lockbox
-    -- A of itemID X, cache stamps X="openable", another still-locked
-    -- lockbox of itemID X in bags then skipped the tooltip re-scan and
-    -- relied on GetContainerItemInfo's `locked` field. That field is
-    -- unreliable for never-picked lockboxes in 3.3.5a - it flips true only
-    -- when the item is mid-cast / mid-swap, not "requires unlock". So the
-    -- still-locked box passed the openable check, UseContainerItem fired,
-    -- server refused, 0.4s retry loop spammed the "item is locked" chat
-    -- error. The tooltip LOCKED line is the only reliable per-instance
-    -- signal, so always do the tooltip scan.
-    local itemID = GetContainerItemID(bag, slot)
-    if not itemID then
-        return false
-    end
-    local cached = EC_compCache.openableCache[itemID]
-    if cached == "never" then
-        return false
-    end
-    local _, itemCount, locked = GetContainerItemInfo(bag, slot)
-    if not itemCount or itemCount <= 0 or locked then
-        return false
-    end
-    -- v2.38.3: SetOwner-before-SetBagItem via the shared helper.
-    EC_compCache.scanBagItem(bag, slot)
-    -- Cap iterations: tooltips can technically grow long; 30 lines is more
-    -- than any container we care about will produce.
-    local sawAnyLine = false
-    for i = 1, 30 do
-        local line = EC_compCache.scanLines[i]
-        if not line then
-            break
-        end
-        local txt = line:GetText()
-        if txt and txt ~= "" then
-            sawAnyLine = true
-        end
-        if txt == LOCKED then
-            -- Do NOT return before checking for ITEM_OPENABLE elsewhere in
-            -- the tooltip - keep scanning. But: a "Locked" line is
-            -- definitive: this instance is not openable right now. Never
-            -- cache "openable" for the itemID either (a different instance
-            -- of same itemID could be locked - the cache would poison the
-            -- next call). Just return false.
-            return false
-        end
-        if txt == ITEM_OPENABLE then
-            -- Deliberately NOT caching "openable" per the v2.59.3 fix
-            -- comment above.
-            return true
-        end
-    end
-    -- Only negative-cache when the tooltip actually rendered: an uncached
-    -- item (client data still warming up) produces an empty tooltip, and
-    -- caching "never" from that would permanently skip a real container.
-    if sawAnyLine then
-        EC_compCache.openableCache[itemID] = "never"
-    end
-    return false
-end
-
--- Auto-open driver. Walks bags, opens the first openable item, and recurses
--- via EC_Delay if more remain. EC_autoOpenInFlight coalesces BAG_UPDATE
--- bursts so we never stack `UseContainerItem` calls within the inter-item
--- delay. Reassigns the forward-declared `EC_HandleAutoOpenContainers` local
--- (declared above near the v2.24.0 BAG_UPDATE debounce frame, so the
--- frame's OnUpdate closure can capture this name). Body lives in this file
--- because it references file-scope locals EC_IsOpenable + EC_autoOpenInFlight.
-function EC_HandleAutoOpenContainers()
-    if not DB or not DB.autoOpenContainers then
-        return
-    end
-    if EC_compCache.vendorRunning then
-        return
-    end
-    if InCombatLockdown() then
-        -- Session-scoped one-shot deferral announce. The earlier per-combat
-        -- variant re-fired the message on every combat instance that
-        -- happened to have a BAG_UPDATE-during-combat with openable items
-        -- in bag; rogues leveling with lockboxes in bag (continuous kill-
-        -- mob-combat cycle) saw the line spam. The flag is now NEVER
-        -- cleared at PLAYER_REGEN_ENABLED, so a user sees the deferral
-        -- notice at most once per /reload. The driver still resumes
-        -- post-combat through PLAYER_REGEN_ENABLED's EC_HandleAutoOpenContainers
-        -- call; the message is just discoverability, not load-bearing.
-        --
-        -- Short-circuit openable scan: walk bags but bail on the first
-        -- openable, so the worst case (no openables in bag) is bounded by
-        -- a single bag walk per /reload. Without this gate, the announce
-        -- would fire on every combat-during-BAG_UPDATE event regardless of
-        -- whether anything is actually deferred.
-        if not EC_compCache.combatDeferredAnnounced then
-            EC_compCache.combatDeferredAnnounced = true
-            local hasOpenable = false
-            local snap = EC_compCache.acquireFlushSnapshot()
-            for i = 1, #snap.entries do
-                local e = snap.entries[i]
-                if EC_IsOpenable(e.bag, e.slot) then
-                    hasOpenable = true
-                    break
-                end
-            end
-            if hasOpenable then
-                PrintNice(L["Containers deferred until out of combat."])
-            end
-        end
-        return
-    end
-    if EC_autoOpenInFlight then
-        return
-    end
-    if not EC_IsAddonEnabledForChar() then
-        return
-    end
-    -- v2.59.0: iterate the shared flush snapshot (or a fresh one when
-    -- called outside the flush, e.g. from PLAYER_REGEN_ENABLED or the
-    -- post-open EC_Delay retry). EC_IsOpenable re-reads the live slot, so
-    -- a snapshot entry that has moved just resolves to "not openable".
-    local snap = EC_compCache.acquireFlushSnapshot()
-    for i = 1, #snap.entries do
-        local e = snap.entries[i]
-        if EC_IsOpenable(e.bag, e.slot) then
-            EC_autoOpenInFlight = true
-            UseContainerItem(e.bag, e.slot)
-            -- 0.4 s gives the prior open's cast room to finish before we
-            -- trigger the next one. Tunable; lower would feel snappier
-            -- but risks interrupting the previous use.
-            EC_Delay(0.4, function()
-                EC_autoOpenInFlight = false
-                EC_HandleAutoOpenContainers()
-            end)
-            return
-        end
-    end
-end
 
 -- v2.10.0: bind-type detection for the per-rarity bindFilter rule. Returns
 -- "boe", "bop", or "any". v2.69.0: the walk itself lives in the shared
@@ -4200,139 +3388,6 @@ end
 -- see docs/CODE_REVIEW.md item 4). Every helper is attached to
 -- EC_compCache, so call sites elsewhere in this file already resolve
 -- through the shared upvalue and need no changes.
-
--- v2.21.0: pre-flight bag-space check used by the Fast Loot queue
--- before each LootSlot call. Returns true if the item can fit (free
--- slot in a compatible bag, OR room in an existing stack). False
--- means bags are too full - the queue defers, and the loot window
--- stays open for the player to deal with manually. Money and items
--- with no link (currency drops) always return true since they don't
--- consume bag space.
-function EC_compCache.canLootItem(link)
-    if not link then
-        return true
-    end
-    local itemFamily = GetItemFamily and GetItemFamily(link) or 0
-    local totalFree = 0
-    for i = 0, NUM_BAG_SLOTS do
-        local free, bagFamily = GetContainerNumFreeSlots(i)
-        bagFamily = bagFamily or 0
-        -- bagFamily 0 = generic bag, accepts anything. Non-zero =
-        -- specialty bag (quiver, soul shard pouch, etc.) - only
-        -- accepts items whose family bit matches.
-        if free and (bagFamily == 0 or (itemFamily and bit.band(itemFamily, bagFamily) > 0)) then
-            totalFree = totalFree + free
-        end
-    end
-    if totalFree > 0 then
-        return true
-    end
-    -- Bags full but check if the item can stack into an existing
-    -- partial stack of the same item.
-    local have = GetItemCount and GetItemCount(link) or 0
-    if have > 0 then
-        local _, _, _, _, _, _, _, stackSize = GetItemInfo(link)
-        if stackSize and stackSize > 1 then
-            local remainder = have % stackSize
-            if remainder > 0 then
-                return true
-            end
-        end
-    end
-    return false
-end
-
--- The Process Bags engine (Disenchant / Mill / Prospect / Lockpick
--- eligibility predicates + spell IDs + buildProcessSummary bag walk)
--- lives in EbonClearance_Process.lua after Stage 7 of the file split.
--- The Process Bags PANEL (rearmProcessButton, refreshProcessPanel,
--- updateProcessSelection, skipProcessTarget + the SecureActionButton
--- UI) stays in this file for Stage 8 because it pulls in a dense web
--- of UI-building helpers. See docs/CODE_REVIEW.md item 4.
-
-
--- v2.21.0: Fast Loot driver. Replaces v2.16.0's tight-loop drain
--- (which fired N LootSlot calls in one frame and risked anti-flood
--- disconnect on busy 3.3.5a private servers) with a queue + OnUpdate
--- throttle: on LOOT_READY, the slot indices are pushed into
--- EC_lootQueue.slots and the OnUpdate driver below drains one slot
--- every EC_LOOT_QUEUE_DELAY seconds. Each pop re-validates the slot
--- and pre-checks bag space before calling LootSlot. The 0.3 s
--- LOOT_READY debounce from v2.16.0 is gone - re-populating the queue
--- on a fresh LOOT_READY is idempotent (wipe + refill).
---
--- The "auto-loot is effectively on right now?" check is unchanged
--- from v2.16.0: autoLootDefault is the CVar setting, AUTOLOOTTOGGLE
--- is the modifier key (typically Shift) that inverts auto-loot for
--- one interaction. When the CVar's value matches whether the
--- modifier is held, auto-loot is OFF for this loot (user is
--- explicitly opting OUT - or didn't opt IN); when they differ,
--- auto-loot is ON. Skip when off so the user keeps the standard
--- loot window for selective looting.
---
--- BoP-bind auto-confirm (also v2.16.0) is unchanged: the
--- hooksecurefunc on LootSlot fires whether the call comes from the
--- old tight loop or the new queue. Fast Loot users still don't see
--- the bind popup.
-local function EC_HandleLootReady()
-    if not DB or not DB.fastLoot then
-        return
-    end
-    if GetCVarBool("autoLootDefault") == IsModifiedClick("AUTOLOOTTOGGLE") then
-        return
-    end
-    local n = GetNumLootItems()
-    if n == 0 then
-        return
-    end
-    local q = EC_compCache.lootQueue
-    -- Lazy-build the OnUpdate driver frame on first LOOT_READY. Lives
-    -- for the rest of the session; cheap when DB.fastLoot is off
-    -- because the OnUpdate body bails on isProcessing == false.
-    if not q.frame then
-        q.frame = CreateFrame("Frame")
-        q.frame:SetScript("OnUpdate", function(self)
-            local qs = EC_compCache.lootQueue
-            if not qs.isProcessing then
-                return
-            end
-            if (GetTime() - qs.lastLootAt) < qs.delay then
-                return
-            end
-            if #qs.slots == 0 then
-                qs.isProcessing = false
-                return
-            end
-            local slotIdx = qs.slots[1]
-            table.remove(qs.slots, 1)
-            -- Per-slot revalidation: server-side loot state can
-            -- desync from the snapshot at LOOT_READY (a slot can
-            -- become invalid before we reach it).
-            local _, _, _, _, locked = GetLootSlotInfo(slotIdx)
-            if locked then
-                -- BoP / roll item: leave for player. The existing
-                -- BoP-bind auto-confirm hook only fires AFTER a
-                -- successful LootSlot, so skipping here leaves the
-                -- loot window open for manual handling.
-                return
-            end
-            -- Bag-space pre-check: avoids ERR_INV_FULL spam in the
-            -- chat frame when bags are full.
-            local link = GetLootSlotLink(slotIdx)
-            if link and not EC_compCache.canLootItem(link) then
-                return
-            end
-            qs.lastLootAt = GetTime()
-            LootSlot(slotIdx)
-        end)
-    end
-    wipe(q.slots)
-    for i = n, 1, -1 do
-        q.slots[#q.slots + 1] = i
-    end
-    q.isProcessing = true
-    q.lastLootAt = 0
-end
 
 -- ===========================================================================
 
@@ -4888,7 +3943,7 @@ function EC_compCache.syncEquipmentSets(silent)
     EC_compCache.equipmentSetIDs = EC_compCache.equipmentSetIDs or {}
     wipe(EC_compCache.equipmentSetIDs)
     local seen = EC_compCache.equipmentSetIDs
-    local stampToKeep = DB and DB.autoProtectEquipmentSets
+    local stampToKeep = true -- Settings cut: equipment-set protection always on
     local added, sets = 0, 0
     local buf = {}
     for i = 1, n do
@@ -5653,9 +4708,8 @@ local function EC_TryResummonScavenger(greedyIndex, anyPetOut, goblinStillOut)
     if EC_IsPlayerBusy() then
         return
     end
-    -- v2.11.0: optional combat-only summon. Defers stuck-recovery and
-    -- post-merchant-restore CallCompanions until combat ends.
-    if DB and DB.summonOnlyOutOfCombat and InCombatLockdown() then
+    -- Settings cut: always summon only out of combat (checkbox removed).
+    if InCombatLockdown() then
         return
     end
     if goblinStillOut and DismissCompanion then
@@ -6266,28 +5320,8 @@ end
 
 -- v2.42.0: shared destructive delete of one bag slot. Picks the item up,
 -- queues pendingDelete (so HookDeletePopupOnce auto-confirms the DELETE_*
--- popup), deletes it, and bumps the deletion stats - identical accounting for
--- the vendor path and the auto-delete path. `announce` true prints one chat
--- line (auto-delete); the vendor path passes false (it has its own summary).
--- v2.60.0: per-rarity chat-announce gate. Master toggle
--- (announceAutoDelete) OFF silences everything; ON lets the per-quality
--- sub-filter (announceAutoDeleteQualities) decide. Unknown quality
--- (nil) errs on the side of announcing so we never silently drop an
--- event the user might care about. Consumed by executeBagSlotDelete +
--- runAutoMarkResilience + runAutoMarkAffixDupes.
-function EC_compCache.shouldAnnounceAutoDelete(quality)
-    if not DB or DB.announceAutoDelete == false then
-        return false
-    end
-    if not DB.announceAutoDeleteQualities then
-        return true
-    end
-    if quality == nil then
-        return true
-    end
-    return DB.announceAutoDeleteQualities[quality] == true
-end
-
+-- popup), deletes it, and bumps the deletion stats. `announce` only picks the
+-- source tag on the recent-deleted log; the vendor path passes false.
 -- Returns true if the delete was issued.
 function EC_compCache.executeBagSlotDelete(bag, slot, itemID, count, quality, announce)
     ClearCursor()
@@ -6312,194 +5346,10 @@ function EC_compCache.executeBagSlotDelete(bag, slot, itemID, count, quality, an
     if quality then
         EC_BumpStatBucket("deletedItemsByQuality", quality, delCount)
     end
-    -- v2.51.0: recent-deleted ring buffer for /ec bugreport. `announce`
-    -- true means the auto-delete path called us (chat announcement
-    -- follows); false means the vendor cycle's delete queue action
-    -- executed. Source tag preserves that distinction so a report can
-    -- separate "worker cleanup" from "auto-delete-on-pickup fired".
+    -- v2.51.0: recent-deleted ring buffer for /ec bugreport.
     EC_LogRecentDeleted(itemID, delCount, announce and "auto" or "vendor")
-    if announce and EC_compCache.shouldAnnounceAutoDelete(quality) then
-        local link = select(2, GetItemInfo(itemID)) or ("item:" .. tostring(itemID))
-        PrintNicef(L["|cffff4444Auto-deleted|r %s."], link)
-    end
     return true
 end
-
--- v2.42.0: auto-delete-on-pickup scan. Runs from the BAG_UPDATE debounce only.
--- Deletes ONE eligible Delete-List item per cycle; the deletion fires another
--- BAG_UPDATE which re-fires the debounce for the next one, self-terminating
--- when none remain (ineligible items are skipped, so no loop).
--- EC-TRAP: one-per-cycle by design (no batch loop). Each delete fires a
--- BAG_UPDATE that re-fires the debounce for the next item; the scan waits on a
--- visible DELETE_* popup so confirmation-required items resolve one at a time.
--- Do NOT "optimise" into a batch delete, and do NOT gate on pendingDelete
--- instead of the popup (low-rarity items delete with no popup and never clear
--- pendingDelete, which would wedge the cascade after the first item).
--- EC-TRAP: deliberately NOT gated on InCombatLockdown - DeleteCursorItem is
--- not combat-protected on 3.3.5a and farming happens in combat, which is the
--- whole point of the feature. Do NOT add a combat guard.
-function EC_compCache.runAutoDeleteOnPickup()
-    local DB = NS.DB
-    -- v2.42.1: master Enable toggle must veto the sweep, same as the
-    -- vendor cycle / scavenger / auto-loot paths do. Without this gate,
-    -- a player who right-clicks the minimap to "turn the addon off"
-    -- can still trigger destructive deletes via Alt+Right-Click ->
-    -- Mark for delete followed by a /reload (real report from
-    -- Sanavesa on v2.42.0). The master gate is the user's only kill
-    -- switch for the entire addon - it MUST veto every destructive
-    -- path. Routed through the existing helper for consistency with
-    -- the vendor cycle (EC_IsAddonEnabledForChar handles both
-    -- DB.enabled and the per-character whitelist).
-    if not EC_IsAddonEnabledForChar() then
-        return
-    end
-    if not (DB and DB.enableDeletion and DB.autoDeleteOnPickup) then
-        return
-    end
-    -- Stamped after the feature gates (not at function entry) so the
-    -- bugreport's last-ran line for this scan means it actually ran, and a
-    -- flush with the feature off pays no stamp.
-    EC_StampEvent("autoDeleteScan")
-    if EC_compCache.vendorRunning then
-        return
-    end
-    -- Wait if a delete-confirmation popup from a prior delete is still on
-    -- screen (HookDeletePopupOnce confirms it; the resulting BAG_UPDATE
-    -- re-fires this scan for the next item). Gate on the VISIBLE popup, NOT
-    -- on pendingDelete: a low-rarity item deletes with no popup and never
-    -- clears pendingDelete, so gating on pendingDelete would wedge the
-    -- cascade after the first item (only one of several would be deleted).
-    local popup = StaticPopup1
-    if popup and popup:IsShown() and popup.which and popup.which:find("^DELETE_") then
-        return
-    end
-    if GetCursorInfo() then
-        return
-    end
-    -- v2.59.0: iterate the shared flush snapshot; only slots whose
-    -- snapshotted itemID is on the Delete List reach the eligibility gate,
-    -- so unlisted slots cost one table lookup each. deleteListSlotEligible
-    -- re-reads the live slot itself, so a moved/changed slot returns nil.
-    local snap = EC_compCache.acquireFlushSnapshot()
-    for i = 1, #snap.entries do
-        local e = snap.entries[i]
-        if IsInSet(DB.deleteList, e.itemID) then
-            local id, count, quality = EC_compCache.deleteListSlotEligible(e.bag, e.slot)
-            if id then
-                EC_compCache.executeBagSlotDelete(e.bag, e.slot, id, count, quality, true)
-                return
-            end
-        end
-    end
-end
-
--- v2.49.2: auto-delete grey items on loot. Runs from the BAG_UPDATE
--- debounce alongside the auto-mark scans. Opt-in via
--- DB.autoDeleteGreyOnLoot, gated on DB.enableDeletion (master switch)
--- + the per-character Enable, a merchant NOT being open (a vendor
--- round-trip yields copper the delete throws away), item quality 0,
--- positive sellPrice (avoids trashing quest keys / 0-value
--- curiosities), not a quest item, not equipped, and not on any Keep
--- List variant / auto-blacklist / the manual Delete List. Deletes via
--- the shared executeBagSlotDelete path (same plumbing + stats + popup
--- serialisation as the auto-delete-on-pickup scan). One delete per
--- BAG_UPDATE burst; the resulting BAG_UPDATE re-fires the debounce for
--- the next grey, self-terminating when none remain.
--- EC-TRAP: reuse EC_compCache.executeBagSlotDelete - do NOT invent a
--- parallel PickupContainerItem + DeleteCursorItem path. The shared
--- helper owns pendingDelete / HookDeletePopupOnce serialisation; a
--- second raw delete path would race the popup mutex.
-function EC_compCache.runAutoDeleteGrey()
-    local DB = NS.DB
-    if not EC_IsAddonEnabledForChar() then
-        return
-    end
-    if not (DB and DB.enableDeletion and DB.autoDeleteGreyOnLoot) then
-        return
-    end
-    if EC_compCache.vendorRunning then
-        return
-    end
-    -- Vendor round-trip is imminent and yields copper; a grey delete
-    -- throws that away. Skip while a merchant is open; the next
-    -- BAG_UPDATE after MERCHANT_CLOSED re-fires this scan.
-    if MerchantFrame and MerchantFrame:IsShown() then
-        return
-    end
-    -- Wait on a visible delete popup / held cursor, same discipline as
-    -- the auto-delete-on-pickup scan (gate on the VISIBLE popup, not
-    -- pendingDelete - low-rarity greys delete with no popup).
-    local popup = StaticPopup1
-    if popup and popup:IsShown() and popup.which and popup.which:find("^DELETE_") then
-        return
-    end
-    if GetCursorInfo() then
-        return
-    end
-    local keepList = DB.blacklist
-    local accountKeep = NS.ADB and NS.ADB.whitelist
-    local blacklistAuto = DB.blacklistAuto
-    local deleteList = DB.deleteList
-    -- v2.59.0: iterate the shared flush snapshot. The snapshot quality
-    -- (GetContainerItemInfo's 4th return) pre-gates the GetItemInfo call:
-    -- entries KNOWN to be quality 1+ are skipped outright; nil / -1
-    -- (uncached) entries fall through to the authoritative GetItemInfo
-    -- check below, never to a skip. This scan runs AFTER the pickup-delete
-    -- scan (which can synchronously destroy one item), so the live slot is
-    -- re-verified against the snapshotted itemID before acting.
-    local snap = EC_compCache.acquireFlushSnapshot()
-    for i = 1, #snap.entries do
-        local e = snap.entries[i]
-        local id = e.itemID
-        if (e.quality == nil or e.quality < 1) and GetContainerItemID(e.bag, e.slot) == id then
-            local _, _, quality, _, _, itemType, _, _, _, _, sellPrice = GetItemInfo(id)
-            if quality == 0
-                and sellPrice
-                and sellPrice > 0
-                and itemType ~= "Quest"
-                and not IsEquippedItem(id)
-                and not (keepList and keepList[id])
-                and not (accountKeep and accountKeep[id])
-                and not (blacklistAuto and blacklistAuto[id])
-                and not (deleteList and deleteList[id])
-            then
-                local _, count, locked = GetContainerItemInfo(e.bag, e.slot)
-                if not locked and count and count > 0 then
-                    EC_compCache.executeBagSlotDelete(e.bag, e.slot, id, count, quality, true)
-                    return -- one delete per BAG_UPDATE burst
-                end
-            end
-        end
-    end
-end
-
--- v2.50.3: session-scoped auto-mark event log. Ring buffer of the last N
--- items runAutoMarkAffixDupes or runAutoMarkResilience wrote to
--- DB.deleteList. Consumed by /ec bugreport so a report tells us WHEN and
--- WHY EC last auto-marked something, without asking the user's chat log
--- to survive as evidence. Session-local (not persisted); wiped on
--- /reload. Ring shifts oldest out on overflow.
-local EC_AUTOMARK_LOG_MAX = 15
-local EC_autoMarkLog = {}
-
-local function EC_LogAutoMark(itemID, reason)
-    if not itemID then
-        return
-    end
-    if #EC_autoMarkLog >= EC_AUTOMARK_LOG_MAX then
-        table.remove(EC_autoMarkLog, 1)
-    end
-    local _, link = GetItemInfo(itemID)
-    EC_autoMarkLog[#EC_autoMarkLog + 1] = {
-        itemID = itemID,
-        itemName = link or ("item:" .. tostring(itemID)),
-        reason = reason or "?",
-        loggedAt = date("%H:%M:%S"),
-    }
-end
-NS.LogAutoMark = EC_LogAutoMark
-NS.autoMarkLog = EC_autoMarkLog
-NS.autoMarkLogMax = EC_AUTOMARK_LOG_MAX
 
 -- v2.51.0: session-scoped ring buffers for what EC has SOLD and DELETED
 -- this session. The lifetime + session counters in DB / ADB.accountStats
@@ -6512,23 +5362,17 @@ NS.autoMarkLogMax = EC_AUTOMARK_LOG_MAX
 --   * recentSold.path   = "manual" (user clicked at vendor, hooksecurefunc
 --                                    fired) or "worker" (EC vendor cycle
 --                                    UseContainerItem)
---   * recentDeleted.source = "auto" (auto-delete-on-pickup) or "vendor"
---                                    (vendor-cycle delete queue action)
+--   * recentDeleted.source = "vendor" (vendor-cycle delete queue action)
 --
--- v2.57.0: these are the FULL session logs behind the Sold History window,
--- not just a "recent" snapshot. Cap is high (5000 each) so a whole farming
--- session is captured; on overflow the oldest shift out and a trim counter
--- records how many, so the window can tell the player "N earlier entries
--- trimmed" rather than silently dropping them. /ec bugreport still shows only
--- the last EC_BUGREPORT_RECENT_MAX of each (a tail slice) so reports stay
--- short. Session-local, wiped on /reload; never persisted.
+-- Cap is high (5000 each) so a whole farming session is captured; on
+-- overflow the oldest are overwritten. /ec bugreport shows only the last
+-- EC_BUGREPORT_RECENT_MAX of each (a tail slice) so reports stay short.
+-- Session-local, wiped on /reload; never persisted.
 local EC_RECENT_SOLD_LOG_MAX = 5000
 local EC_RECENT_DELETED_LOG_MAX = 5000
 local EC_BUGREPORT_RECENT_MAX = 20
 local EC_recentSoldLog = {}
 local EC_recentDeletedLog = {}
-local EC_soldLogTrimmed = 0
-local EC_deletedLogTrimmed = 0
 -- v2.68.1: per-log write counters driving a TRUE ring. At the cap the old
 -- code did table.remove(t, 1) per event - an O(5000) front-shift on the
 -- vendor path during exactly the marathon sessions that fill the log
@@ -6557,12 +5401,8 @@ EC_LogRecentSold = function(itemID, count, path, copper, reason)
     end
     EC_compCache.soldLogWrites = EC_compCache.soldLogWrites + 1
     local idx = ((EC_compCache.soldLogWrites - 1) % EC_RECENT_SOLD_LOG_MAX) + 1
-    if EC_compCache.soldLogWrites > EC_RECENT_SOLD_LOG_MAX then
-        EC_soldLogTrimmed = EC_soldLogTrimmed + 1
-    end
     local _, link = GetItemInfo(itemID)
     EC_historySeq = EC_historySeq + 1
-    EC_compCache.historySeq = EC_historySeq
     EC_recentSoldLog[idx] = {
         itemID = itemID,
         itemName = link or ("item:" .. tostring(itemID)),
@@ -6573,7 +5413,6 @@ EC_LogRecentSold = function(itemID, count, path, copper, reason)
         loggedAt = date("%H:%M:%S"),
         seq = EC_historySeq,
     }
-    EC_compCache.historyDirty = true
 end
 
 EC_LogRecentDeleted = function(itemID, count, source, reason)
@@ -6582,12 +5421,8 @@ EC_LogRecentDeleted = function(itemID, count, source, reason)
     end
     EC_compCache.deletedLogWrites = EC_compCache.deletedLogWrites + 1
     local idx = ((EC_compCache.deletedLogWrites - 1) % EC_RECENT_DELETED_LOG_MAX) + 1
-    if EC_compCache.deletedLogWrites > EC_RECENT_DELETED_LOG_MAX then
-        EC_deletedLogTrimmed = EC_deletedLogTrimmed + 1
-    end
     local _, link = GetItemInfo(itemID)
     EC_historySeq = EC_historySeq + 1
-    EC_compCache.historySeq = EC_historySeq
     EC_recentDeletedLog[idx] = {
         itemID = itemID,
         itemName = link or ("item:" .. tostring(itemID)),
@@ -6597,7 +5432,6 @@ EC_LogRecentDeleted = function(itemID, count, source, reason)
         loggedAt = date("%H:%M:%S"),
         seq = EC_historySeq,
     }
-    EC_compCache.historyDirty = true
 end
 
 NS.LogRecentSold = EC_LogRecentSold
@@ -6625,7 +5459,6 @@ function EC_compCache.logRecentSaved(itemID, count, kind, reason)
     local idx = ((EC_compCache.savedLogWrites - 1) % 200) + 1
     local _, link = GetItemInfo(itemID)
     EC_historySeq = EC_historySeq + 1
-    EC_compCache.historySeq = EC_historySeq
     NS.recentSavedLog[idx] = {
         itemID = itemID,
         itemName = link or ("item:" .. tostring(itemID)),
@@ -6635,132 +5468,15 @@ function EC_compCache.logRecentSaved(itemID, count, kind, reason)
         loggedAt = date("%H:%M:%S"),
         seq = EC_historySeq,
     }
-    EC_compCache.historyDirty = true
     -- Always announce: a mid-run save means the user JUST changed a rule
     -- and is watching; one line confirms the change took effect in time.
     PrintNicef(L["|cffffd700Kept|r %s - %s"], link or ("item:" .. tostring(itemID)), reason or "?")
 end
 
--- v2.59.4: Process Bags cast log. Session ring buffer of successful
--- Disenchant / Milling / Prospecting / Pick Lock / Convert casts, one
--- entry per successful spell resolution. Captured pre-cast on the
--- panel's PostClick (so the item info is still valid) and committed
--- on UNIT_SPELLCAST_SUCCEEDED matching the pending spell name. Fills
--- the visibility gap in /ec bugreport ("what did I DE this session?")
--- that led to Serv's v2.59.3 worry about accidentally disenchanting a
--- needed affix. Session-local; wiped on /reload.
-local EC_RECENT_PROCESSED_LOG_MAX = 200
-local EC_recentProcessedLog = {}
-local EC_processedLogTrimmed = 0
--- Pending capture between PostClick and UNIT_SPELLCAST_SUCCEEDED.
--- Populated by the panel just before the cast fires (bag/slot/itemID
--- are still valid; the /cast has not yet resolved), consumed by the
--- spellcast handler that matches the same spell name.
-EC_compCache.pendingProcessCast = nil
-
-function NS.LogRecentProcessed(entry)
-    if not entry or not entry.itemID then
-        return
-    end
-    if #EC_recentProcessedLog >= EC_RECENT_PROCESSED_LOG_MAX then
-        table.remove(EC_recentProcessedLog, 1)
-        EC_processedLogTrimmed = EC_processedLogTrimmed + 1
-    end
-    local _, link = GetItemInfo(entry.itemID)
-    EC_recentProcessedLog[#EC_recentProcessedLog + 1] = {
-        itemID = entry.itemID,
-        itemName = entry.itemName or link or ("item:" .. tostring(entry.itemID)),
-        mode = entry.mode or "?",
-        spellName = entry.spellName or "?",
-        count = tonumber(entry.count) or 1,
-        loggedAt = date("%H:%M:%S"),
-    }
-end
-
-NS.recentProcessedLog = EC_recentProcessedLog
-NS.recentProcessedLogMax = EC_RECENT_PROCESSED_LOG_MAX
-function NS.SessionProcessedTrimmed()
-    return EC_processedLogTrimmed
-end
 -- How many of each log /ec bugreport dumps (a tail slice) so reports stay
 -- short even though the logs now hold the whole session.
 NS.bugReportRecentMax = EC_BUGREPORT_RECENT_MAX
 
--- Live trim counts for the Sold History window's "N earlier entries trimmed"
--- note. Returned as (sold, deleted); numbers are value-copied, so this has to
--- be a function rather than a snapshot field.
-function NS.SessionHistoryTrimmed()
-    return EC_soldLogTrimmed, EC_deletedLogTrimmed
-end
-
--- Wipe the session sell/delete logs (the Sold History window's Clear button)
--- and zero the trim counters so the "trimmed" note resets too.
-function NS.ClearSessionHistory()
-    wipe(EC_recentSoldLog)
-    wipe(EC_recentDeletedLog)
-    EC_soldLogTrimmed = 0
-    EC_deletedLogTrimmed = 0
-    -- Reset the ring write cursors so post-clear writes append from slot 1
-    -- again (a stale cursor would leave holes ipairs stops at).
-    EC_compCache.soldLogWrites = 0
-    EC_compCache.deletedLogWrites = 0
-    -- v2.70.0: the saved-items log clears with the rest of the session
-    -- history (same Clear button contract).
-    wipe(NS.recentSavedLog)
-    EC_compCache.savedLogWrites = 0
-end
-
--- Session sell/delete history. Opens the interactive Sold History window
--- (EbonClearance_HistoryWindow.lua): the whole session, newest-first, with
--- All / Sold / Deleted + search filters and a Copy button. Falls back to a
--- plain copyable text dump if that module didn't load. Shared by the
--- /ec history command, the Main panel's Sold History button, and the Alt+
--- Right-Click menu. Session-only - the logs clear on /reload.
-function NS.ShowSessionHistory()
-    if NS.ShowHistoryWindow then
-        NS.ShowHistoryWindow()
-        return
-    end
-    local rows = {}
-    local function push(e, action)
-        rows[#rows + 1] = {
-            at = e.loggedAt or "",
-            text = string.format(
-                "[%s] %s %dx %s  |cff888888- %s|r",
-                tostring(e.loggedAt or "?"),
-                action,
-                tonumber(e.count) or 1,
-                tostring(e.itemName),
-                tostring(e.reason or "?")
-            ),
-        }
-    end
-    for _, e in ipairs(EC_recentSoldLog) do
-        push(e, L["Sold"])
-    end
-    for _, e in ipairs(EC_recentDeletedLog) do
-        push(e, L["Deleted"])
-    end
-    -- Newest-first. loggedAt is HH:MM:SS, string-sortable within a session.
-    table.sort(rows, function(a, b)
-        return a.at > b.at
-    end)
-    local body
-    if #rows == 0 then
-        body = L["Nothing sold or deleted yet this session."]
-    else
-        local lines = {}
-        for i = 1, #rows do
-            lines[i] = rows[i].text
-        end
-        body = table.concat(lines, "\n")
-    end
-    if NS.ShowCopyFrame then
-        NS.ShowCopyFrame(L["EbonClearance: Session History"], body)
-    else
-        PrintNice(body)
-    end
-end
 
 -- v2.51.0: watch-list toggle snapshot at PLAYER_LOGIN, after EnsureDB.
 -- The watch list is a curated set of high-diagnostic-value toggles - the
@@ -6880,118 +5596,6 @@ end
 NS.lastEventAt = EC_lastEventAt
 NS.StampEvent = EC_StampEvent
 
--- v2.44.0: auto-mark Resilience PvP gear for deletion. When the
--- toggle is on, every BAG_UPDATE scans bags for items with a
--- "Resilience" tooltip line and adds them to the Delete List (one
--- chat line per add). The actual destruction is handled by the
--- existing vendor cycle or auto-delete-on-pickup - this function
--- only adds entries to the list. Gates symmetrically with the
--- auto-delete sweep so the master Enable toggle vetoes the whole
--- destructive pipeline.
-function EC_compCache.runAutoMarkResilience()
-    local DB = NS.DB
-    if not EC_IsAddonEnabledForChar() then
-        return
-    end
-    if not (DB and DB.autoMarkResilience) then
-        return
-    end
-    EC_StampEvent("autoMarkResilience")
-    if EC_compCache.vendorRunning then
-        return
-    end
-    -- Skip items that are already on a curated list. Keep List wins
-    -- (the player has explicitly said "do not touch"); items already
-    -- on the Delete List are a no-op.
-    local deleteList = DB.deleteList
-    if not deleteList then
-        return
-    end
-    local keepList = DB.blacklist
-    local accountKeep = NS.ADB and NS.ADB.whitelist
-    -- v2.59.0: iterate the shared flush snapshot. Runs after the pickup-
-    -- delete scan (which can synchronously empty one slot mid-flush), so
-    -- the live slot is re-verified against the snapshotted itemID before
-    -- the tooltip scan - itemHasResilience caches by itemID, and scanning
-    -- a changed slot would poison that cache.
-    local snap = EC_compCache.acquireFlushSnapshot()
-    for i = 1, #snap.entries do
-        do -- scoping block keeps the old two-level loop body untouched
-            local e = snap.entries[i]
-            local id = e.itemID
-            if id and not deleteList[id] and GetContainerItemID(e.bag, e.slot) == id then
-                local protectedByKeep = (keepList and keepList[id])
-                    or (accountKeep and accountKeep[id])
-                if not protectedByKeep then
-                    if EC_compCache.itemHasResilience(e.bag, e.slot, id) then
-                        -- v2.44.0 iter: only mark UNSELLABLE Resilience
-                        -- gear (sellPrice 0 / nil). The original
-                        -- feedback (Murlocked: "delete pvp item with
-                        -- resillience (they are unsellable)") was
-                        -- specifically about gear the vendor refuses.
-                        -- A real player report on this iteration: green
-                        -- Slippers of Serenity / Pauldrons of Sufferance
-                        -- with Resilience BUT a vendor price (2g+)
-                        -- were getting auto-deleted - the user
-                        -- reasonably expected those to be sold instead.
-                        -- Skip anything sellable; the normal sell rules
-                        -- handle them (Sell List, quality rule).
-                        -- v2.60.0: also destructure `quality` (3rd return)
-                        -- so the announce gate can consult
-                        -- DB.announceAutoDeleteQualities[quality].
-                        local _, _, quality, _, _, _, _, _, _, _, sellPrice = GetItemInfo(id)
-                        if sellPrice and sellPrice > 0 then -- luacheck: ignore 542
-                            -- Sellable; let the vendor cycle do its
-                            -- job. Don't fall through to the next
-                            -- slot via `return` - the BAG_UPDATE
-                            -- coalescing keeps the rest of the bag
-                            -- in scope for this same sweep.
-                        else
-                            deleteList[id] = true
-                            -- v2.50.3: session ring-buffer log for /ec bugreport.
-                            EC_LogAutoMark(id, "resilience")
-                            if EC_compCache.shouldAnnounceAutoDelete(quality) then
-                                local link = select(2, GetItemInfo(id)) or ("item:" .. tostring(id))
-                                -- v2.50.2: append recovery hint so the player
-                                -- has a path back if the auto-mark caught an
-                                -- item they wanted to keep.
-                                PrintNicef(
-                                    L["|cffff4444Marked for deletion (Resilience, unsellable):|r %s"]
-                                        .. " "
-                                        .. L["|cffaaaaaaAdd to Keep List (Alt+Right-Click on the bag slot) to save it.|r"],
-                                    link
-                                )
-                            end
-                            -- One add per BAG_UPDATE fire keeps the
-                            -- chat tidy if the player loots multiple
-                            -- PvP pieces at once; the next BAG_UPDATE
-                            -- (any bag event re-fires the debounce)
-                            -- picks up the next one.
-                            return
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
--- v2.47.0: auto-mark UNSELLABLE affixes for deletion. When the toggle is on,
--- scans bags for affixed Rare/Epic items that EC would otherwise sell -
--- anything affixDisposable releases: a dupe you own, or a rank below your "Sell
--- affixes below rank" floor - that are soulbound AND have no vendor value, and
--- adds them to the Delete List (one chat line per add). These are exactly the
--- items that would otherwise get flagged "will sell" yet stick in the bag
--- forever because the merchant refuses them (no vendor price). Affixes EC keeps
--- (a rank still being collected) are never touched. Items with a vendor price
--- are left to the sell path - the player keeps the gold. Destruction is handled
--- by the vendor cycle or auto-delete-on-pickup, never here. Gated like the
--- other destructive scans (master Enable + enableDeletion) AND requires affix
--- protection on (protectAffixedRareItems): the feature is only meaningful for
--- the affixed items protection is otherwise KEEPING, and the Delete-List affix
--- gate (deleteListSlotEligible, which re-checks affixDisposable per instance)
--- only runs when protection is on. It does NOT require the "sell exact-rank
--- dupes" toggle. Asked for by Broyo.
 -- v2.57.2: item levels at/above this are "real gear" and are never auto-marked
 -- for deletion by the unsellable-affix feature. On Project Ebonhold even top-end
 -- soulbound gear has sellPrice 0, so "no vendor value" alone is NOT a safe
@@ -7049,225 +5653,6 @@ function EC_compCache.itemProtectedFromAutoMarkDelete(id)
     return false
 end
 
-function EC_compCache.runAutoMarkAffixDupes()
-    local DB = NS.DB
-    if not EC_IsAddonEnabledForChar() then
-        return
-    end
-    if not (DB and DB.enableDeletion and DB.autoMarkAffixDupes) then
-        return
-    end
-    EC_StampEvent("autoMarkAffix")
-    if not DB.protectAffixedRareItems then
-        return
-    end
-    if EC_compCache.vendorRunning then
-        return
-    end
-    local deleteList = DB.deleteList
-    if not deleteList then
-        return
-    end
-    local keepList = DB.blacklist
-    local accountKeep = NS.ADB and NS.ADB.whitelist
-    -- v2.50.2: honour equipment-set membership as user intent. The cache
-    -- is rebuilt on EQUIPMENT_SETS_CHANGED regardless of the auto-protect
-    -- toggle. v2.57.2 SAFETY (Serv): force a FRESH sync on every scan rather
-    -- than only lazy-priming when nil. The lazy-prime left a stale cache the
-    -- one time it mattered - a set member added or edited after login could
-    -- be auto-marked because the cache never refreshed. A full re-sync each
-    -- debounced scan also re-stamps set members onto the Keep List (Serv
-    -- request: saved-set items stay Keep-protected for safety). Bounded work:
-    -- a few sets of ~19 slots on the already-debounced BAG_UPDATE path.
-    if EC_compCache.syncEquipmentSets then
-        EC_compCache.syncEquipmentSets(true)
-    end
-    local setMembers = EC_compCache.equipmentSetIDs
-    -- v2.59.0: iterate the shared flush snapshot. Snapshot-quality pre-gate:
-    -- PE affixes exist only on Rare (3) / Epic (4), so entries KNOWN to be
-    -- sub-rare skip every protection lookup and tooltip scan below; nil /
-    -- -1 (uncached) entries fall through to the authoritative GetItemInfo
-    -- quality check, never to a skip. Runs after the pickup-delete scan, so
-    -- the live slot is re-verified against the snapshotted itemID before
-    -- the per-slot tooltip work (tome / affix / bind scans cache by item).
-    local snap = EC_compCache.acquireFlushSnapshot()
-    for i = 1, #snap.entries do
-        do -- scoping block keeps the old two-level loop body untouched
-            local e = snap.entries[i]
-            local id = e.itemID
-            if id
-                and not deleteList[id]
-                and (e.quality == nil or e.quality < 0 or e.quality >= 3)
-                and GetContainerItemID(e.bag, e.slot) == id
-            then
-                local protectedByKeep = (keepList and keepList[id])
-                    or (accountKeep and accountKeep[id])
-                    or (setMembers and setMembers[id])
-                -- Respect every other protection: Keep List, equipped, quest
-                -- items, tomes/recipes, and baseline profession tools are
-                -- never auto-marked. v2.57.2 adds the shared strong guard
-                -- (itemProtectedFromAutoMarkDelete) so high item-level "real
-                -- gear", set members, and quest rewards can never be marked -
-                -- the same gate the tooltip preview uses, so they can't drift.
-                if not protectedByKeep
-                    and not IsEquippedItem(id)
-                    and not (EC_compCache.isQuestItem and EC_compCache.isQuestItem(id))
-                    and not (EC_compCache.itemIsTome and EC_compCache.itemIsTome(e.bag, e.slot, id))
-                    and not (EC_compCache.baselineProtectedIDs and EC_compCache.baselineProtectedIDs[id])
-                    and not EC_compCache.itemProtectedFromAutoMarkDelete(id)
-                then
-                    local _, _, quality, _, _, _, _, _, _, _, sellPrice = GetItemInfo(id)
-                    if quality and quality >= 3 then
-                        local affix = EC_compCache.bagSlotAffixData(e.bag, e.slot)
-                        -- Mark any affix EC would otherwise SELL (a dupe you
-                        -- own, or a rank below your "Sell affixes below rank"
-                        -- floor - the shared affixDisposable check) that is
-                        -- soulbound (can't auction/trade) AND has no vendor
-                        -- value (can't be sold). Those are the ones that would
-                        -- otherwise be flagged "will sell" yet stick in the bag
-                        -- forever because the merchant refuses them. Affixes EC
-                        -- keeps (still being collected) are left alone.
-                        if affix and EC_compCache.affixDisposable(affix) then
-                            -- v2.48.1 refinement: don't auto-mark items where
-                            -- the release reason is rankBelow-ONLY AND the
-                            -- player doesn't own this affix at this rank.
-                            -- The floor policy is "sell low-rank if I can";
-                            -- for unsellable items the sell path is inert,
-                            -- and keeping the item for extraction is more
-                            -- valuable than deleting it with no gold gained.
-                            -- Only fires when rank<floor is the SOLE reason
-                            -- affixDisposable returned true (manualAllow /
-                            -- owned-dupe releases still auto-mark).
-                            local affixKey = affix.description
-                                and EC_compCache.normaliseAffixDesc
-                                and EC_compCache.normaliseAffixDesc(affix.description)
-                            local ADB2 = NS.ADB
-                            local manualAllow = affixKey and ADB2 and ADB2.allowedAffixes and ADB2.allowedAffixes[affixKey]
-                            local playerOwns = EC_compCache.playerOwnsAffix
-                                and EC_compCache.playerOwnsAffix(affix)
-                            local rankBelowOnly = (not manualAllow)
-                                and (not playerOwns)
-                                and DB.affixMinSellRank
-                                and DB.affixMinSellRank > 0
-                                and affix.rank
-                                and affix.rank < DB.affixMinSellRank
-                            if rankBelowOnly then -- luacheck: ignore 542
-                                -- Skip; item stays for extraction.
-                            else
-                            local soulbound = EC_compCache.getBindType(e.bag, e.slot) == "bop"
-                            local noValue = not (sellPrice and sellPrice > 0)
-                            if soulbound and noValue then
-                                deleteList[id] = true
-                                -- v2.50.3: session ring-buffer log for /ec bugreport.
-                                EC_LogAutoMark(id, "affix")
-                                if EC_compCache.shouldAnnounceAutoDelete(quality) then
-                                    local link = select(2, GetItemInfo(id)) or ("item:" .. tostring(id))
-                                    -- v2.50.2: append recovery hint so the
-                                    -- player has a path back if the auto-mark
-                                    -- caught an item they wanted to keep.
-                                    PrintNicef(
-                                        L["|cffff4444Marked for delete|r %s - affix you can't sell (no vendor value)."]
-                                            .. " "
-                                            .. L["|cffaaaaaaAdd to Keep List (Alt+Right-Click on the bag slot) to save it.|r"],
-                                        link
-                                    )
-                                end
-                                -- One add per BAG_UPDATE fire (mirrors the
-                                -- resilience auto-mark); the next bag event
-                                -- re-fires the debounce for the next item.
-                                return
-                            end
-                            end -- else (rankBelowOnly branch)
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
--- v2.60.0 (Serv report, Recipe: Haunted Herring / Recipe: Last Week's Mammoth):
--- auto-mark learned profession recipes with sellPrice 0 for deletion. Some
--- BoP profession recipes (Cooking recipes at low ranks, some low-level Skinning /
--- Lockpicking schematics) return sellPrice 0 from GetItemInfo, so "Sell Known
--- Recipes" can't do anything with them (vendor refuses). When this toggle is on,
--- and the parent sellKnownRecipes toggle is also on, learned unsellable recipes
--- are added to the Delete List instead. Skips Keep List / equipment-set /
--- currently-equipped / quest / non-recipe tomes. Announce goes through the
--- shared per-rarity chat filter (announceAutoDeleteQualities). Gated like the
--- other destructive scans (master Enable + enableDeletion).
-function EC_compCache.runAutoMarkKnownUnsellableRecipes()
-    local DB = NS.DB
-    if not EC_IsAddonEnabledForChar() then
-        return
-    end
-    if not (DB and DB.enableDeletion and DB.autoMarkKnownUnsellableRecipes) then
-        return
-    end
-    if not DB.sellKnownRecipes then
-        return
-    end
-    EC_StampEvent("autoMarkKnownRecipe")
-    -- EC-TRAP: this scan deliberately does NOT consult protectAllTomes /
-    -- protectUnlearnedTomes. It rides the same documented carve-out as
-    -- EC_IsSellable's recipePass ("Sell Known Recipes overrides the tome
-    -- veto for LEARNED recipes"): the feature only exists for learned,
-    -- unsellable recipes, and it requires three explicit opt-ins
-    -- (enableDeletion + autoMarkKnownUnsellableRecipes + sellKnownRecipes).
-    -- Adding a protectAllTomes guard here would make the toggle silently
-    -- inert for exactly the users who asked for it. Unlearned recipes are
-    -- never touched (playerKnowsTomeSpell gate below).
-    if EC_compCache.vendorRunning then
-        return
-    end
-    local deleteList = DB.deleteList
-    if not deleteList then
-        return
-    end
-    local keepList = DB.blacklist
-    local accountKeep = NS.ADB and NS.ADB.whitelist
-    local setMembers = EC_compCache.equipmentSetIDs
-    local snap = EC_compCache.acquireFlushSnapshot()
-    for i = 1, #snap.entries do
-        do
-            local e = snap.entries[i]
-            local id = e.itemID
-            if id and not deleteList[id] and GetContainerItemID(e.bag, e.slot) == id then
-                local protectedByKeep = (keepList and keepList[id])
-                    or (accountKeep and accountKeep[id])
-                    or (setMembers and setMembers[id])
-                if not protectedByKeep
-                    and not IsEquippedItem(id)
-                    and not (EC_compCache.isQuestItem and EC_compCache.isQuestItem(id))
-                then
-                    local _, _, quality, _, _, _, _, _, _, _, sellPrice = GetItemInfo(id)
-                    if not (sellPrice and sellPrice > 0)
-                        and EC_compCache.itemIsTome
-                        and EC_compCache.tomeKind
-                        and EC_compCache.playerKnowsTomeSpell
-                        and EC_compCache.itemIsTome(e.bag, e.slot, id)
-                        and EC_compCache.tomeKind(id) == "Recipe"
-                        and EC_compCache.playerKnowsTomeSpell(e.bag, e.slot, id)
-                    then
-                        deleteList[id] = true
-                        EC_LogAutoMark(id, "knownRecipe")
-                        if EC_compCache.shouldAnnounceAutoDelete(quality) then
-                            local link = select(2, GetItemInfo(id)) or ("item:" .. tostring(id))
-                            PrintNicef(
-                                L["|cffff4444Marked for delete|r %s - recipe you know (no vendor value)."]
-                                    .. " "
-                                    .. L["|cffaaaaaaAdd to Keep List (Alt+Right-Click on the bag slot) to save it.|r"],
-                                link
-                            )
-                        end
-                        return
-                    end
-                end
-            end
-        end
-    end
-end
-
 local function BuildQueue(junkOnly)
     wipe(queue)
     queueIndex = 1
@@ -7293,7 +5678,8 @@ local function BuildQueue(junkOnly)
     -- when the slot didn't queue a delete. Matches the bag-tint logic
     -- in EbonClearance_BagDisplay.lua's bagSlotWillSellCategory (delete
     -- first) and the new Delete-List step in describeSellability.
-    local deletionOn = DB.enableDeletion == true
+    -- Settings cut: being on the Delete List is enough (enableDeletion always on).
+    local deletionOn = true
     for bag = 0, 4 do
         local slots = GetContainerNumSlots(bag)
         for slot = 1, slots do
@@ -7724,46 +6110,6 @@ local function StartRun()
 
     EC_RecordInventoryWorthSample()
 
-    -- Auto-repair. v2.9.0 added the optional guild-bank branch: when
-    -- DB.repairUseGuildBank is on AND the player is in a guild AND the
-    -- guild bank can fund the full repair cost, RepairAllItems(1) charges
-    -- the bank instead of personal gold. Any miss in the guild chain
-    -- falls through to the existing personal-gold branch.
-    if
-        DB
-        and DB.repairGear == true
-        and CanMerchantRepair
-        and CanMerchantRepair()
-        and GetRepairAllCost
-        and RepairAllItems
-    then
-        local repairCost, canRepair = GetRepairAllCost()
-        if canRepair and repairCost and repairCost > 0 then
-            local useGuild = DB.repairUseGuildBank == true
-                and IsInGuild
-                and IsInGuild()
-                and CanGuildBankRepair
-                and CanGuildBankRepair()
-                and GetGuildBankWithdrawMoney
-                and GetGuildBankWithdrawMoney() >= repairCost
-            if useGuild then
-                RepairAllItems(1) -- 1 = use guild bank funds
-                -- v2.38.1: helpers write to DB + ADB.accountStats.
-                EC_BumpStat("totalRepairs", 1)
-                EC_BumpStat("totalRepairCopper", repairCost)
-                EC_session.repairs = EC_session.repairs + 1
-                EC_session.repairCopper = EC_session.repairCopper + repairCost
-                PrintNicef(L["Repaired from guild bank: %s"], CopperToColoredText(repairCost))
-            elseif GetMoney and GetMoney() >= repairCost then
-                RepairAllItems()
-                EC_BumpStat("totalRepairs", 1)
-                EC_BumpStat("totalRepairCopper", repairCost)
-                EC_session.repairs = EC_session.repairs + 1
-                EC_session.repairCopper = EC_session.repairCopper + repairCost
-            end
-        end
-    end
-
     BuildQueue(not merchantAllowed)
 
     if #queue == 0 then
@@ -7783,33 +6129,6 @@ end
 -- + EC_InstallTooltipHookOnce) lives in EbonClearance_Tooltip.lua after
 -- Stage 8c of the file split. Exposed as NS.InstallTooltipHookOnce for
 -- the ADDON_LOADED branch in this file to call.
-
-
--- v2.16.0: Fast Loot BoP-bind auto-dismiss. When Fast Loot is on and the
--- user loots a Bind-on-Pickup item, Blizzard normally shows a LOOT_BIND
--- popup asking "are you sure?". That popup blocks the rest of the loot
--- queue draining and defeats the point of Fast Loot. This hook auto-
--- confirms each LootSlot call and force-hides the popup. Self-gates on
--- DB.fastLoot at call time so non-Fast-Loot users keep the Blizzard
--- safety prompt. Idempotent: the hookedOnce guard makes a second call
--- cheap if anything ever calls this twice. Pattern borrowed from
--- LootClicker (others/LootClicker-master/core.lua:158-161).
-local EC_fastLootHooked = false
-local function EC_InstallFastLootHookOnce()
-    if EC_fastLootHooked then
-        return
-    end
-    EC_fastLootHooked = true
-    hooksecurefunc("LootSlot", function(slot)
-        if not DB or not DB.fastLoot then
-            return
-        end
-        ConfirmLootSlot(slot)
-        StaticPopup_Hide("LOOT_BIND")
-    end)
-end
-
-
 
 
 -- The list-row factories (EC_compCache.makeListRowFactory,
@@ -7903,78 +6222,6 @@ EC_compCache.popupRaiseOnHide = function(self)
     end
 end
 
-StaticPopupDialogs["EC_CONFIRM_DELETE_PROFILE"] = {
-    text = L['Delete profile "|cffffff00%s|r"?\n|cffaaaaaaThis cannot be undone.|r'],
-    button1 = YES,
-    button2 = NO,
-    OnAccept = function(self, data)
-        if type(data) == "function" then
-            data()
-        end
-    end,
-    OnShow = EC_compCache.popupRaiseOnShow,
-    OnHide = EC_compCache.popupRaiseOnHide,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
-
--- v2.72.0: deleting a settings profile repoints every character that
--- used it back to Default, so spell that out in the prompt.
-StaticPopupDialogs["EC_CONFIRM_DELETE_SPROFILE"] = {
-    text = L['Delete settings profile "|cffffff00%s|r"?\n|cffaaaaaaCharacters using it switch to Default. This cannot be undone.|r'],
-    button1 = YES,
-    button2 = NO,
-    OnAccept = function(self, data)
-        if type(data) == "function" then
-            data()
-        end
-    end,
-    OnShow = EC_compCache.popupRaiseOnShow,
-    OnHide = EC_compCache.popupRaiseOnHide,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
-
--- v2.75.0 (fresh-audit fix): saving over an existing same-name settings
--- profile used to overwrite it silently (delete had a confirm, save did not).
-StaticPopupDialogs["EC_CONFIRM_OVERWRITE_SPROFILE"] = {
-    text = L['Overwrite settings profile "|cffffff00%s|r"?\n|cffaaaaaaIts saved settings are replaced with this character\'s current ones. This cannot be undone.|r'],
-    button1 = YES,
-    button2 = NO,
-    OnAccept = function(self, data)
-        if type(data) == "function" then
-            data()
-        end
-    end,
-    OnShow = EC_compCache.popupRaiseOnShow,
-    OnHide = EC_compCache.popupRaiseOnHide,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
-
-StaticPopupDialogs["EC_CONFIRM_CLEAR_PROFILE"] = {
-    text = L['Clear all items from profile "|cffffff00%s|r"?\n|cffaaaaaaThe profile itself will remain.|r'],
-    button1 = YES,
-    button2 = NO,
-    OnAccept = function(self, data)
-        if type(data) == "function" then
-            data()
-        end
-    end,
-    OnShow = EC_compCache.popupRaiseOnShow,
-    OnHide = EC_compCache.popupRaiseOnHide,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
-
 -- Generic confirmation for the per-list "Clear All" button on every list panel
 -- (Whitelist - Character / Whitelist - Account / Blacklist / Deletion List).
 -- The %s slot is filled with the list's user-facing title.
@@ -7996,51 +6243,7 @@ StaticPopupDialogs["EC_CONFIRM_CLEAR_LIST"] = {
     preferredIndex = 3,
 }
 
--- v2.42.0: confirm enabling auto-delete-on-pickup (irreversible behaviour).
-StaticPopupDialogs["EC_CONFIRM_AUTODELETE"] = {
-    text = L["Auto-delete permanently destroys Delete List items the instant they're looted - no vendor step, no undo. Turn it on?"],
-    button1 = YES,
-    button2 = NO,
-    OnAccept = function(self, data)
-        if type(data) == "function" then
-            data()
-        end
-    end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
-
--- v2.12.0 stale-upgrade cleanup confirmation popup. The %d slot is filled
--- with the count of stale entries detected by /ec clean upgrades. The
--- OnAccept invokes the callback function passed via StaticPopup_Show's
--- third "data" argument, mirroring the EC_CONFIRM_CLEAR_LIST pattern.
--- v2.49.2: conflicting-addon warning popup. Shown once at PLAYER_LOGIN
--- when EC's delete path is active AND the detected conflicting addon is
--- loaded AND the player hasn't opted out. Modal so it can't be missed
--- (a one-time chat line was easy to scroll past). "Open Settings" jumps
--- to the main panel where the opt-out toggle lives.
--- EC-TRAP: this popup deliberately NAMES the conflicting addon ("Auto
--- Delete") - a user-sanctioned exception to the "No third-party addon
--- references in new EC artefacts" rule, granted because the detection is
--- folder-specific and naming it makes the warning actionable. The
--- exception is THIS STRING ONLY: the detection helper, all comments, and
--- the /ec bugreport line stay neutral. Do NOT propagate the name
--- elsewhere, and do NOT "neutralise" this string back.
-StaticPopupDialogs["EC_CONFLICT_WARNING"] = {
-    text = L["|cffff4444EbonClearance has detected that Auto Delete is also running.|r Only one bag-management addon should handle deletions at a time - running both can contest the delete-confirm popup and make items disappear unexpectedly. Turn off one of the two. You can silence this warning in EbonClearance settings."],
-    button1 = L["Open Settings"],
-    button2 = OKAY,
-    OnAccept = function()
-        NS.OpenOptionsPanel("EbonClearanceOptionsMain")
-    end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
-
+-- Confirmation for /ec clean upgrades apply.
 StaticPopupDialogs["EC_CONFIRM_CLEAN_UPGRADES"] = {
     text = L["Remove |cffffff00%d|r stale 'Upgrade'-tagged entries from your Keep List?\n|cffaaaaaaThese items were auto-tagged as upgrades but are no longer above your currently-equipped iLvl. Manual Keep List entries (no auto-tag) and 'Worn'-tagged entries are not affected.|r"],
     button1 = YES,
@@ -8056,46 +6259,14 @@ StaticPopupDialogs["EC_CONFIRM_CLEAN_UPGRADES"] = {
     preferredIndex = 3,
 }
 
--- v2.12.0 first-run welcome popup. Fired once on PLAYER_LOGIN when EnsureDB
--- detected a fresh install (DB._needsWelcome). Two-button choice:
--- Keep Defaults (closes silently after a chat ack) or Open Settings (jumps
--- the Interface Options frame to the EbonClearance main panel). The double
--- InterfaceOptionsFrame_OpenToCategory call is a known 3.3.5a workaround
--- for the first-time-this-session focus quirk - the same pattern used by
--- the slash command's "open settings" fallback at the bottom of the file.
--- v2.38.0: confirmation popup for the Quickstart panel's Apply button.
--- The text() callback fills the preset name (or "your tailored answers")
--- via the dialog's `data` arg captured at StaticPopup_Show time. OnAccept
--- reads data.answers / data.fixedCaps / data.presetKey and calls
--- NS.Quickstart.Apply. The popup is settings-only - the body text spells
--- this out so a player who applies a preset can't be surprised about
--- Sell / Keep / Delete lists.
-StaticPopupDialogs["EC_APPLY_QUICKSTART"] = {
-    text = L["Apply %s?\n\nThis changes your speed, protection, auto-sell, and visual settings.\n\nYour |cffb6ffb6Sell|r, |cffb6ffb6Keep|r, and |cffb6ffb6Delete|r lists stay exactly as they are."],
-    button1 = "Apply",
-    button2 = CANCEL,
-    OnAccept = function(self, data)
-        if data and NS.Quickstart and NS.Quickstart.Apply then
-            NS.Quickstart.Apply(data.answers, data.fixedCaps, data.presetKey)
-        end
-    end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
-
 -- Build the static widgets for the main options panel. Called once per panel
 -- (guarded by `panel.inited` in OnShow). `refreshStats` is the dynamic refresh
 -- callback captured by the Reset button.
 
 
 InterfaceOptions_AddCategory(_G["EbonClearanceOptionsMain"])
--- v2.38.0: Quickstart is intentionally NOT registered as an Interface
--- Options sub-panel - it's a standalone modal frame parented to UIParent.
--- The only entry points are the "Open Quickstart" button on the Main
--- panel and the fresh-install PLAYER_LOGIN auto-open. Keeps the sidebar
--- focused on the long-form settings panels.
+-- Baseline pages. Bag listing-status borders are always on (no panel).
+-- See docs/SCOPE_CUT.md.
 
 
 -- CreateListUI, the 5 list-row factories, and EC_AddScanByQualityRow live in
@@ -8110,32 +6281,12 @@ InterfaceOptions_AddCategory(_G["EbonClearanceOptionsMain"])
 
 InterfaceOptions_AddCategory(_G["EbonClearanceOptionsMerchant"]) -- Merchant Settings
 InterfaceOptions_AddCategory(_G["EbonClearanceOptionsScavenger"]) -- Scavenger Settings
-InterfaceOptions_AddCategory(_G["EbonClearanceOptionsCharacter"]) -- Item Highlighting
--- v2.36.x: Stats sub-panel registered between the main settings group
--- (Merchant / Protection / Scavenger / Highlighting) and the list group
--- (Sell / Account Sell / Keep / Delete) so the player sees configuration
--- panels first, then their stats dashboard, then the curated lists. The
--- Stats panel file itself does not call InterfaceOptions_AddCategory; the
--- sort position is controlled at one place here.
--- v2.39.x: Guild panel loads before Events.lua (see .toc), so it is also
--- registered here, immediately after Stats - Personal, to keep both stats
--- panels adjacent above Sell List.
-InterfaceOptions_AddCategory(_G["EbonClearanceOptionsStats"]) -- Stats - Personal
-InterfaceOptions_AddCategory(_G["EbonClearanceOptionsGuild"]) -- Stats - Guild
-InterfaceOptions_AddCategory(_G["EbonClearanceOptionsServer"]) -- Stats - Server (v2.58.0)
 InterfaceOptions_AddCategory(_G["EbonClearanceOptionsWhitelist"]) -- Sell List
 InterfaceOptions_AddCategory(_G["EbonClearanceOptionsAccountWhitelist"]) -- Account Sell List
 InterfaceOptions_AddCategory(_G["EbonClearanceOptionsBlacklist"]) -- Keep List
--- v2.49.3: Keep Settings (internal frame name EbonClearanceOptionsBlacklistSettings,
--- formerly labelled "Protection Settings") sits right under Keep List so it mirrors
--- Delete List + Delete Settings. Frame name kept for compat with help-link pointers.
+-- Keep Settings (internal frame name EbonClearanceOptionsBlacklistSettings).
 InterfaceOptions_AddCategory(_G["EbonClearanceOptionsBlacklistSettings"]) -- Keep Settings
 InterfaceOptions_AddCategory(_G["EbonClearanceOptionsDeletion"]) -- Delete List
-InterfaceOptions_AddCategory(_G["EbonClearanceOptionsDeletionSettings"]) -- Delete Settings
-InterfaceOptions_AddCategory(_G["EbonClearanceOptionsProcessBags"]) -- Process Bags
-InterfaceOptions_AddCategory(_G["EbonClearanceOptionsProfiles"]) -- Profiles
-InterfaceOptions_AddCategory(_G["EbonClearanceOptionsSettingsProfiles"]) -- Settings Profiles (v2.72.0)
-InterfaceOptions_AddCategory(_G["EbonClearanceOptionsImportExport"]) -- Import/Export
 
 -- v2.11.0 reactive panel layout. The Interface Options frame is user-
 -- resizable in some UI mod packs (and the resize handle is exposed as a
@@ -8173,11 +6324,9 @@ BINDING_HEADER_EBONCLEARANCE = "EbonClearance"
 _G["BINDING_NAME_CLICK EbonClearanceTargetMerchantButton:LeftButton"] = "Target Goblin Merchant"
 -- Secure click bindings show their raw "CLICK <button>:<mouseButton>" action
 -- string in the keybind UI unless a BINDING_NAME_ global gives them a label.
-_G["BINDING_NAME_CLICK EbonClearanceProcessCastBtn:LeftButton"] = "Process Next"
 BINDING_NAME_EBONCLEARANCE_TOGGLE_SETTINGS = "Open/close settings"
 BINDING_NAME_EBONCLEARANCE_TOGGLE_ENABLED = "Toggle enabled"
 BINDING_NAME_EBONCLEARANCE_FORCE_SELL = "Force sell at current merchant"
-BINDING_NAME_EBONCLEARANCE_TOGGLE_LOOTLOG = "Open/close Loot Log"
 -- Cross-list intent groups for the add-time conflict guard:
 --   keep   = whitelist (per-character) + accountWhitelist (account-wide)
 --   sell   = blacklist
@@ -8370,13 +6519,6 @@ function EbonClearance_ToggleSettings()
         InterfaceOptionsFrame:Hide()
     else
         NS.OpenOptionsPanel("EbonClearanceOptionsMain")
-    end
-end
-
-function EbonClearance_ToggleLootLog()
-    EnsureDB()
-    if NS.ToggleLootWindow then
-        NS.ToggleLootWindow()
     end
 end
 
@@ -8631,161 +6773,11 @@ SlashCmdList["EBONCLEARANCE"] = function(msg)
         end
         PrintNice("procdump: no Chance-on-hit bag items found")
         return
-    elseif cmd == "profile" or cmd == "profiles" then
-        local sub, arg = rest:match("^(%S+)%s*(.*)")
-        sub = (sub or ""):lower()
-        arg = (arg or ""):gsub("^%s+", ""):gsub("%s+$", "")
-
-        if sub == "save" and arg ~= "" then
-            EnsureDB()
-            -- Discard the boolean ok flag; PrintNice surfaces the failure
-            -- message itself for the user. Renamed local from `msg` to
-            -- `result` to avoid shadowing the outer slash-input `msg`.
-            local _, result = EC_SaveProfile(arg)
-            PrintNice(result)
-        elseif sub == "load" and arg ~= "" then
-            EnsureDB()
-            local _, result = EC_LoadProfile(arg)
-            PrintNice(result)
-        elseif sub == "delete" and arg ~= "" then
-            EnsureDB()
-            local _, result = EC_DeleteProfile(arg)
-            PrintNice(result)
-        elseif sub == "list" or sub == "" then
-            EnsureDB()
-            PrintNice(L["Sell List Profiles:"])
-            local names = {}
-            for name in pairs(DB.whitelistProfiles) do
-                if type(name) == "string" then
-                    names[#names + 1] = name
-                end
-            end
-            table.sort(names, function(a, b)
-                return a:lower() < b:lower()
-            end)
-            for i = 1, #names do
-                local wlCount = EC_CountItems(DB.whitelistProfiles[names[i]])
-                local blCount = DB.blacklistProfiles[names[i]] and EC_CountItems(DB.blacklistProfiles[names[i]]) or 0
-                local tag = (names[i] == DB.activeProfileName) and L[" |cff00ff00(active)|r"] or ""
-                PrintNicef(L["  |cffffff00%s|r - %d whitelist, %d blacklist%s"], names[i], wlCount, blCount, tag)
-            end
-        else
-            PrintNice(L["Usage: /ec profile save|load|delete|list <name>"])
-        end
-        return
-    elseif cmd == "sprofile" or cmd == "sprofiles" then
-        -- v2.72.0 settings profiles (selling behaviour per character).
-        local sub, arg = rest:match("^(%S+)%s*(.*)")
-        sub = (sub or ""):lower()
-        arg = (arg or ""):gsub("^%s+", ""):gsub("%s+$", "")
-
-        if sub == "save" and arg ~= "" then
-            EnsureDB()
-            local _, result = NS.SaveSettingsProfile(arg)
-            PrintNice(result)
-        elseif sub == "use" and arg ~= "" then
-            EnsureDB()
-            local _, result = NS.UseSettingsProfile(arg)
-            PrintNice(result)
-        elseif sub == "delete" and arg ~= "" then
-            EnsureDB()
-            local _, result = NS.DeleteSettingsProfile(arg)
-            PrintNice(result)
-        elseif sub == "list" or sub == "" then
-            EnsureDB()
-            PrintNice(L["Settings Profiles:"])
-            local profiles = EbonClearanceDB.settingsProfiles or {}
-            local names = {}
-            for name in pairs(profiles) do
-                if type(name) == "string" then
-                    names[#names + 1] = name
-                end
-            end
-            table.sort(names, function(a, b)
-                return a:lower() < b:lower()
-            end)
-            local chars = EbonClearanceDB.chars or {}
-            for i = 1, #names do
-                local users = 0
-                for _, charNS in pairs(chars) do
-                    if (charNS.activeSettingsProfile or "Default") == names[i] then
-                        users = users + 1
-                    end
-                end
-                local tag = (names[i] == (DB.activeSettingsProfile or "Default")) and L[" |cff00ff00(this character)|r"]
-                    or ""
-                PrintNicef(L["  |cffffff00%s|r - used by %d character(s)%s"], names[i], users, tag)
-            end
-        else
-            PrintNice(L["Usage: /ec sprofile save|use|delete|list <name>"])
-        end
-        return
     end
+
 
     if cmd == "bugreport" then
         NS.ShowBugReport()
-        return
-    end
-
-    if cmd == "commtest" then
-        -- v2.39.0: solo diagnostic for the version-alert comms layer.
-        -- Tests wire relay (guild echo) and the nudge logic (simulated peer).
-        if NS.Comms then
-            NS.Comms.RunSelfTest()
-        else
-            PrintNice(L["|cffff4444Comms module not loaded.|r"])
-        end
-        return
-    end
-
-    if cmd == "guildtest" then
-        -- Solo diagnostic for the guild-share panel: inject simulated members.
-        if NS.GuildShare then
-            local n = NS.GuildShare.InjectTestPeers()
-            PrintNicef(L["Injected %d simulated guild members. Open the Guild panel (or re-run this with it open) to see the pooled data."], n)
-        else
-            PrintNice(L["|cffff4444Guild-share module not loaded.|r"])
-        end
-        return
-    end
-
-    if cmd == "procsharetest" then
-        -- v2.53.0: solo diagnostic for the proc-share pipeline. Merges
-        -- three high-range fake pairings into ADB.chanceProcConfirmedItems
-        -- through the real ProcShare.mergeReply path. Confirms the merge
-        -- writes work and populates NS.recentProcShareMerges so the new
-        -- /ec bugreport section can be exercised without a live guildmate.
-        if NS.ProcShare then
-            local n = NS.ProcShare.InjectTestPeers()
-            PrintNicef(L["Injected %d simulated proc pairing(s) into ADB.chanceProcConfirmedItems. Run /ec bugreport to see the merge ring."], n)
-        else
-            PrintNice(L["|cffff4444ProcShare module not loaded.|r"])
-        end
-        return
-    end
-
-    if cmd == "servertest" then
-        -- v2.58.0: solo diagnostic for the Server Stats odometer. Injects fake
-        -- realm sharers (including a spoofed one the sanity cap must drop) so
-        -- the panel + live user-count can be exercised on one account.
-        if NS.ServerShare then
-            local n = NS.ServerShare.InjectTestPeers()
-            PrintNicef(L["Injected %d simulated realm sharer(s). Open the Server panel to see the odometer (the spoofed one should be ignored)."], n)
-        else
-            PrintNice(L["|cffff4444Server-share module not loaded.|r"])
-        end
-        return
-    end
-
-    if cmd == "realmtest" then
-        -- v2.58.0: solo diagnostic for the realm channel transport. Chat
-        -- channels echo your own messages, so this verifies join/hide/send/
-        -- receive with no second player.
-        if NS.RealmComms then
-            NS.RealmComms.RunSelfTest()
-        else
-            PrintNice(L["|cffff4444Realm comms module not loaded.|r"])
-        end
         return
     end
 
@@ -8907,18 +6899,6 @@ SlashCmdList["EBONCLEARANCE"] = function(msg)
             end
         else
             PrintNicef(L["|cffff4444Unknown sub-command:|r %s. Try on / off / status / dump / clear."], sub)
-        end
-        return
-    end
-
-    if cmd == "rules" then
-        -- v2.44.0: rule-summary copy frame. Plain-English breakdown
-        -- of every active toggle + the precedence order EC uses.
-        -- Same surface as the Main panel's "Current Rules" button.
-        if NS.ShowRuleSummary then
-            NS.ShowRuleSummary()
-        else
-            PrintNice("|cffff4444Rule summary is unavailable.|r")
         end
         return
     end
@@ -9105,48 +7085,6 @@ SlashCmdList["EBONCLEARANCE"] = function(msg)
         return
     end
 
-    if cmd == "processdebug" then
-        -- v2.38.3: one-shot diagnostic for the Process Bags engine.
-        -- Opens a copyable window with every gate that decides whether
-        -- an item appears in the Disenchant / Mill / Prospect / Lockpick
-        -- list (spell-known states, settings, per-slot scan results,
-        -- buildProcessSummary entry counts). Players whose herbs / ores
-        -- don't show up can paste the output and we can identify which
-        -- layer is failing on their setup (private-server spell IDs,
-        -- tooltip-marker variance, etc.) before guessing a fix.
-        --
-        -- Sub-commands:
-        --   /ec processdebug         - open the diagnostic window
-        --   /ec processdebug clear   - wipe processCache (forces fresh
-        --                              tooltip scans on the next bag
-        --                              walk; lets us confirm whether a
-        --                              "none" entry is genuine or
-        --                              cache-poisoned from a /reload
-        --                              tooltip race)
-        local sub = (rest:match("^(%S+)") or ""):lower()
-        if sub == "clear" then
-            if EC_compCache and EC_compCache.processCache then
-                local n = 0
-                for _ in pairs(EC_compCache.processCache) do
-                    n = n + 1
-                end
-                for k in pairs(EC_compCache.processCache) do
-                    EC_compCache.processCache[k] = nil
-                end
-                PrintNicef(L["|cffb6ffb6Process cache cleared|r (%d entry/entries removed). Re-run |cffffff00/ec processdebug|r to scan fresh."], n)
-            else
-                PrintNice(L["|cffff4444processCache not available.|r"])
-            end
-            return
-        end
-        if NS.ShowProcessDebugDump then
-            NS.ShowProcessDebugDump()
-        else
-            PrintNice(L["|cffff4444Process debug dump is unavailable.|r"])
-        end
-        return
-    end
-
     if cmd == "sellinfo" then
         EnsureDB()
         -- Optional positional args: bag, slot. Defaults to the first
@@ -9157,20 +7095,6 @@ SlashCmdList["EBONCLEARANCE"] = function(msg)
         if EC_compCache.printSellabilityTrace then
             EC_compCache.printSellabilityTrace(bag, slot)
         end
-        return
-    end
-
-    if cmd == "loot" then
-        EnsureDB()
-        if NS.ToggleLootWindow then
-            NS.ToggleLootWindow()
-        end
-        return
-    end
-
-    if cmd == "history" then
-        EnsureDB()
-        NS.ShowSessionHistory()
         return
     end
 
@@ -9577,19 +7501,8 @@ f:RegisterEvent("EQUIPMENT_SETS_CHANGED")
 -- Both handlers re-scan and rebuild the description map.
 f:RegisterEvent("LEARNED_SPELL_IN_TAB")
 f:RegisterEvent("SPELLS_CHANGED")
--- Wakes the auto-open-containers driver when combat ends. Without this the
--- combat-deferred queue could sit indefinitely if no further BAG_UPDATE
--- arrives. Handler self-gates on DB.autoOpenContainers, so users with the
--- toggle off pay one early-return per combat exit.
+-- Wakes combat-deferred settings-panel opens and a cheap extraction refresh.
 f:RegisterEvent("PLAYER_REGEN_ENABLED")
--- v2.16.0: drives the Fast Loot driver. Handler self-gates on
--- DB.fastLoot and on Blizzard's autoLootDefault CVar, so users without
--- the toggle on pay one early-return per loot interaction.
-f:RegisterEvent("LOOT_READY")
--- Group-roster events for version-gossip probes. WoW 3.3.5a equivalents;
--- GROUP_ROSTER_UPDATE is 4.0+ and must not be used here.
-f:RegisterEvent("PARTY_MEMBERS_CHANGED")
-f:RegisterEvent("RAID_ROSTER_UPDATE")
 
 f:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -9608,11 +7521,14 @@ f:SetScript("OnEvent", function(self, event, ...)
             -- nil call site, hiding which subsystem actually failed
             -- to load.
             if NS.HookDeletePopupOnce then NS.HookDeletePopupOnce() end
-            EC_InstallFastLootHookOnce()
             if NS.ApplyGreedyChatFilter then NS.ApplyGreedyChatFilter() end
-            if NS.CreateMinimapButton then NS.CreateMinimapButton() end
+            if NS.CreateMinimapButton then
+                NS.CreateMinimapButton()
+            end
             if NS.InstallTooltipHookOnce then NS.InstallTooltipHookOnce() end
-            if NS.CreateLDBLauncher then NS.CreateLDBLauncher() end
+            if NS.CreateLDBLauncher then
+                NS.CreateLDBLauncher()
+            end
             if NS.CreateTargetMerchantButton then NS.CreateTargetMerchantButton() end
             if NS.InstallBagContextHookOnce then NS.InstallBagContextHookOnce() end
             if EC_manualSell and EC_manualSell.installHookOnce then
@@ -9700,24 +7616,12 @@ f:SetScript("OnEvent", function(self, event, ...)
         if wasBootstrapped
             and DB
             and DB.summonGreedy
-            and DB.restoreScavengerAfterLoad
             and EC_compCache.lastScavengerOut
         then
+            -- Settings cut: restore after load is always on (checkbox removed).
             local _, scavOut = EC_FindGreedyScavenger()
             if not scavOut then
                 EC_SummonGreedyWithDelay()
-            end
-        end
-        -- v2.49.2: conflict warning. Fires only when EC's delete path
-        -- is active AND the player hasn't opted out AND a third-party
-        -- auto-delete addon is loaded. Modal popup (not a chat line -
-        -- a one-time chat message was easy to miss). Neutral framing per
-        -- project rule; player identifies the other addon via their own
-        -- list. Inside the PLAYER_LOGIN-only branch so it's one-shot per
-        -- session (PLAYER_ENTERING_WORLD zone changes don't re-fire it).
-        if event == "PLAYER_LOGIN" then
-            if DB.enableDeletion and DB.warnConflictingAddons and EC_HasConflictingDeleteAddon() then
-                StaticPopup_Show("EC_CONFLICT_WARNING")
             end
         end
         -- v2.51.0: watch-list toggle snapshot at PLAYER_LOGIN, after
@@ -9744,51 +7648,7 @@ f:SetScript("OnEvent", function(self, event, ...)
                 NS.PrimeDeleteListItemCache()
             end
         end
-        -- Version gossip: once per session (login / reload, not zone changes),
-        -- after a short settle, ask the guild for versions.
-        if event == "PLAYER_LOGIN" then
-            NS.Delay(5, function()
-                if NS.Comms and GetGuildInfo("player") then
-                    NS.Comms.FireVersionProbe("GUILD")
-                end
-            end)
-            -- v2.53.0: initial proc-pairing pull request 6s after login,
-            -- one second AFTER the version probe so the two don't overlap.
-            -- Opt-in gated at RequestNow (own throttle + toggle check).
-            NS.Delay(6, function()
-                if EbonClearanceDB and EbonClearanceDB.shareChanceProcs
-                    and NS.ProcShare and NS.ProcShare.RequestNow
-                then
-                    NS.ProcShare.RequestNow()
-                end
-            end)
-            -- v2.58.0: realm-wide bus join 7s after login (one second after
-            -- the proc pull so the three settle staggered). Only joins when the
-            -- player shares server stats, so a channel slot is never consumed
-            -- otherwise. The join also fires one self-suppressing request so the
-            -- odometer has data when the panel is first opened - and the version
-            -- it carries lets the existing versionAlerts nudge hear the realm.
-            NS.Delay(7, function()
-                if EbonClearanceDB and EbonClearanceDB.shareServerData
-                    and NS.RealmComms and NS.ServerShare and NS.ServerShare.RequestNow
-                then
-                    NS.RealmComms.Join()
-                    NS.ServerShare.RequestNow()
-                end
-            end)
-        end
     elseif event == "PLAYER_REGEN_ENABLED" then
-        -- Combat ended: re-fire the open driver. If the toggle is off or
-        -- the queue is empty the driver early-returns; cost on combat
-        -- exit for opted-out users is one branch.
-        --
-        -- The combatDeferredAnnounced flag is intentionally NOT cleared
-        -- here. It used to be (per-combat re-announce), but a tester
-        -- rogue-leveling with lockboxes in bag reported the deferral line
-        -- firing repeatedly across short mob fights. The announce is now
-        -- session-scoped (one per /reload) since its purpose is one-time
-        -- discoverability, not a per-combat status reminder.
-        EC_HandleAutoOpenContainers()
         -- Drain any settings-panel open that was queued while combat was
         -- active. Same double-call workaround as the original click paths.
         local pendingOpen = EC_compCache.pendingOpenAfterCombat
@@ -9796,47 +7656,11 @@ f:SetScript("OnEvent", function(self, event, ...)
             EC_compCache.pendingOpenAfterCombat = nil
             if pendingOpen == "main" then
                 NS.OpenOptionsPanel("EbonClearanceOptionsMain")
-            elseif pendingOpen == "process" then
-                NS.OpenOptionsPanel("EbonClearanceOptionsProcessBags")
             end
         end
-        -- v2.22.0: Process Bags cast-button re-arm. SetAttribute is blocked
-        -- during combat, so any re-arm attempts from BAG_UPDATE bail and
-        -- this combat-exit catch-up restores a current macrotext.
-        EC_compCache.rearmProcessButton()
-        -- v2.26.0: cheap dirty-check refresh of the known-extraction
-        -- description map. PE's ExtractionService updates in-place
-        -- after the player extracts at the Anvil; this catches the
-        -- state at combat exit without needing a /reload.
+        -- Cheap dirty-check refresh of the known-extraction description map.
         if EC_compCache.refreshExtractionIfDirty then
             EC_compCache.refreshExtractionIfDirty()
-        end
-        -- v2.25.0: optional one-line nudge when combat ends with
-        -- lockable containers in bags. Off by default (one extra line
-        -- per combat exit is noisy for rogues farming heavy zones).
-        -- Only counts containers, not casts available; the user picks
-        -- which one to open via the panel / hold-key-to-drain.
-        if
-            DB.lockpickEnabled
-            and DB.lockpickNotifyOnCombatExit
-            and IsSpellKnown
-            and IsSpellKnown(EC_compCache.SPELL_PICK_LOCK)
-        then
-            local n = 0
-            for bag = 0, 4 do
-                local slots = GetContainerNumSlots(bag) or 0
-                for slot = 1, slots do
-                    if EC_compCache.canPickLock(bag, slot) then
-                        n = n + 1
-                    end
-                end
-            end
-            if n > 0 then
-                PrintNicef(
-                    L["|cffaaaaaa%d lockbox(es) available.|r Click |cffffb84dProcess Next|r in Process Bags to open."],
-                    n
-                )
-            end
         end
     elseif event == "EQUIPMENT_SETS_CHANGED" then
         EC_StampEvent("equipmentSetsChanged")
@@ -9917,11 +7741,6 @@ f:SetScript("OnEvent", function(self, event, ...)
         EC_compCache.bagUpdatePending = true
         EC_compCache.bagUpdateAccum = 0
         EC_compCache.bagUpdateFrame:Show()
-    elseif event == "LOOT_READY" then
-        -- v2.16.0: Fast Loot driver. Self-gates on DB.fastLoot and on
-        -- Blizzard's autoLootDefault CVar so non-Fast-Loot users pay
-        -- one early-return per loot interaction.
-        EC_HandleLootReady()
     elseif event == "LOOT_CLOSED" then
         -- One push per corpse looted. EC_IsLootSilenceStuck prunes the ring
         -- inside its body (called from the 5 s pet tick), so growth is bounded.
@@ -9963,42 +7782,6 @@ f:SetScript("OnEvent", function(self, event, ...)
             EC_compCache.lastProfLootCastAt = GetTime()
         end
         EC_compCache.lastPlayerCastAt = GetTime()
-        -- v2.37.0: Process Bags lifetime cast counters. Counts every
-        -- successful Disenchant / Milling / Prospecting / Pick Lock,
-        -- whether the cast came from the Process Bags secure button
-        -- or a manual cast bar. "Opening" is excluded - it fires on
-        -- every container right-click and would over-attribute.
-        if DB and spellName and EC_compCache.PROF_LOOT_SPELLS[spellName] and spellName ~= "Opening" then
-            -- v2.38.1: helper writes to DB + ADB.accountStats.
-            EC_BumpStatBucket("processCastCounts", spellName, 1)
-        end
-        -- v2.59.4: consume pendingProcessCast if the successful spell
-        -- matches what the Process Bags panel captured just before the
-        -- macrotext ran. Log to NS.recentProcessedLog and clear the
-        -- pending struct. If the spell doesn't match, leave pending
-        -- alone (a bumped Auto Attack, self-heal, etc. shouldn't
-        -- consume the DE/Mill/Prospect/Pick Lock capture).
-        do
-            local pending = EC_compCache.pendingProcessCast
-            if pending and spellName and pending.spellName == spellName then
-                if NS.LogRecentProcessed then
-                    NS.LogRecentProcessed(pending)
-                end
-                EC_compCache.pendingProcessCast = nil
-            end
-        end
-        -- v2.25.0: Pick Lock completion - BAG_UPDATE doesn't fire for a
-        -- lockbox's lock-state change (slot contents unchanged), and
-        -- ITEM_LOCK_CHANGED doesn't reliably fire either. UNIT_SPELLCAST_SUCCEEDED
-        -- with the Pick Lock spell name is the most reliable trigger.
-        -- Route through the same debounce frame as BAG_UPDATE so the
-        -- panel refreshes (drops the now-unlocked row) and the auto-
-        -- open driver fires (opens the now-`Right Click to Open` box).
-        if spellName and EC_compCache.PICK_LOCK_NAME and spellName == EC_compCache.PICK_LOCK_NAME then
-            EC_compCache.bagUpdatePending = true
-            EC_compCache.bagUpdateAccum = 0
-            EC_compCache.bagUpdateFrame:Show()
-        end
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
         -- v2.10.0: auto-protect equipped gear. arg1 is the slot id (1-19);
         -- empty slots fire too (the player just un-equipped). The helper
@@ -10027,7 +7810,6 @@ f:SetScript("OnEvent", function(self, event, ...)
         EC_batchTotalSold = 0
         EC_batchTotalGold = 0
         EC_compCache.batchTotalDeleted = 0
-        EC_keepBagsFlag = true
         -- v2.9.0: snapshot bag contents BEFORE StartRun fires its first sell.
         -- The hooksecurefunc on UseContainerItem reads this map to attribute
         -- right-click sells (which empty the slot before the hook callback
@@ -10081,43 +7863,12 @@ f:SetScript("OnEvent", function(self, event, ...)
         if EC_compCache.lootCycleState == STATE.SELLING then
             EC_compCache.lootCycleState = STATE.IDLE
         end
-        -- Reopen bags after merchant closes
-        if DB and DB.keepBagsOpen and EC_keepBagsFlag then
-            EC_Delay(0.8, EC_OpenAllBags)
-        end
-        EC_keepBagsFlag = false
-    elseif event == "PARTY_MEMBERS_CHANGED" then
-        -- Probe the party only when not in a raid (raid uses its own event).
-        if NS.Comms and GetNumRaidMembers() == 0 and GetNumPartyMembers() > 0 then
-            NS.Comms.FireVersionProbe("PARTY")
-        end
-    elseif event == "RAID_ROSTER_UPDATE" then
-        if NS.Comms and GetNumRaidMembers() > 0 then
-            NS.Comms.FireVersionProbe("RAID")
-        end
     end
 
     if event == "PLAYER_LOGIN" then
         EC_Delay(1, function()
-            -- v2.38.0: fresh installs auto-open the Quickstart panel
-            -- directly (no welcome popup). Existing characters keep the
-            -- unchanged single-line welcome.
-            if DB and DB._needsQuickstartOpen then
-                DB._needsQuickstartOpen = nil
-                PrintNice(
-                    L["|cffffff00Welcome to EbonClearance!|r Opening Quickstart - pick a preset or answer a few questions to set up."]
-                )
-                -- Extra 0.3s defer so the UI has finished settling
-                -- before the standalone Quickstart frame floats up.
-                EC_Delay(0.3, function()
-                    local qf = _G["EbonClearanceOptionsQuickstart"]
-                    if qf and qf.Show then
-                        qf:Show()
-                    end
-                end)
-            else
-                PrintNice(L["Enabled. Use |cff00ff00/ec|r to configure."])
-            end
+            PrintNice(L["Enabled. Use |cff00ff00/ec|r to configure."])
+
             -- Fresh-install one-shot equipped sync. Set in EnsureDB only
             -- when the SavedVariable was nil at first ADDON_LOADED, so
             -- existing characters never trigger this. The 2 s extra
