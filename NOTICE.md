@@ -1,4 +1,4 @@
-# Notice - prior art and convergent patterns
+# Notice - prior art, upstream, and this fork
 
 This file documents the design lineage of EbonClearance honestly, so
 that any future "they copied us" or "you copied them" claim has a
@@ -8,36 +8,79 @@ shared with the broader WoW 3.3.5a addon ecosystem.
 
 ---
 
+## This fork (mturchik / scope cut)
+
+This working tree is a **fork** of Serv's EbonClearance
+(https://github.com/powerfulqa/EbonClearance), maintained at
+https://github.com/mturchik/EbonClearance for Project Ebonhold play.
+
+**What changed in this iteration**
+
+- The addon is cut down to three jobs: companion summon loop, sell /
+  keep / delete decisions, and the four lists. See
+  [`docs/SCOPE_CUT.md`](docs/SCOPE_CUT.md).
+- Removed from this fork (among other surfaces): Process Bags / Fast
+  Loot / auto-open, Quickstart, Help, Sold History / Loot Log, Personal
+  / Guild / Server stats and all share transports, update alerts,
+  list and settings profile UIs, Import/Export, and the Item
+  Highlighting options panel (listing-status bag borders stay, always
+  on).
+- Settings that used to have checkboxes for "always on" behaviour
+  (equipment-set Keep, out-of-combat summon, restore after load, fixed
+  sell pace, Delete List destroys) remain as forced behaviour with no
+  UI control.
+- Scavenger restore also runs on combat exit (queued on combat enter)
+  and on dungeon / raid entry when Enable and Summon Greedy are on.
+  Disabling mid scavenger / merchant / scavenger cycle aborts the swap.
+
+**What the licence still requires**
+
+Upstream authorship and provenance stay. Per [`LICENSE`](LICENSE),
+redistributions must preserve Serv as `## Author:`, the in-game byline,
+the provenance globals, the LICENSE file, and this NOTICE. The
+canonical upstream URL in provenance / byline remains
+https://github.com/powerfulqa/EbonClearance (fingerprint salt and
+author credit are part of that contract). This fork does not rebrand
+the addon name, `/ec`, or the SavedVariable names.
+
+Behaviour history for upstream releases remains in
+[`CHANGELOG.md`](CHANGELOG.md); notes for the thin fork begin at the
+v2.78.0 scope-cut stanza.
+
+---
+
 ## Convergent patterns in the 3.3.5a niche
 
 EbonClearance ships in a niche that several other addons also
 target: automated inventory management for a single private server,
-sharing a small set of WoW 3.3.5a APIs and a single core gameplay
-loop (loot, summon, sell, repair, repeat). Heavy feature parity
-between addons in this niche - auto-loot cycles, companion-pet
-management, mount-aware behaviour, stuck-detection heuristics,
-batched selling with disconnect-prevention caps, two-scope item
-lists, hand-rolled minimap buttons, three-keybind `Bindings.xml`
-files, and so on - reflects that small API surface and that single
-loop converging on broadly similar solutions. Convergence on the
-same shape is not, in itself, evidence of copying in either
-direction.
+sharing a small set of WoW 3.3.5a APIs and a core gameplay loop (loot,
+summon, sell, repeat). Feature parity between addons in this niche -
+auto-loot cycles, companion-pet management, mount-aware behaviour,
+stuck-detection heuristics, batched selling with disconnect-prevention
+caps, two-scope item lists, hand-rolled minimap buttons, keybind
+`Bindings.xml` files, and so on - reflects that small API surface and
+that loop converging on broadly similar solutions. Convergence on the
+same shape is not, in itself, evidence of copying in either direction.
 
 ---
 
 ## Related projects in the PE auto-vendor niche
 
-Two other addons solve overlapping problems in the same niche:
+Two other addons solve overlapping problems in the same niche. The
+comparisons below describe **upstream** EbonClearance's history as well
+as patterns that remain in this fork; features named only in upstream
+(Process Bags, version-update gossip, and so on) are not present here
+after the scope cut.
 
 - [AutoDelete](https://github.com/disarrayed/AutoDelete) (MIT-licensed) -
   whitelist + delete + sell hybrid with a tabbed custom-window UI, an
   Auto-Invite system, and ElvUI bag drag-buttons. Ships features like
   `autoAddEquipped` (sync currently-equipped gear to a Keep list +
-  reactive PLAYER_EQUIPMENT_CHANGED), `summonOnlyInCombat`, and a
-  first-run welcome popup. Several of these landed in AutoDelete's
-  v3.10-v3.18 series (April 25 - May 2, 2026), in some cases days
-  before EbonClearance's equivalents shipped (notably `autoAddEquipped`,
-  May 2 in AutoDelete vs May 4 in EC v2.10.0).
+  reactive PLAYER_EQUIPMENT_CHANGED) and combat-gated summon toggles.
+  Several of these landed in AutoDelete's v3.10-v3.18 series (April 25 -
+  May 2, 2026), in some cases days before upstream EbonClearance's
+  equivalents shipped (notably `autoAddEquipped`, May 2 in AutoDelete
+  vs May 4 in EC v2.10.0).
 
   EbonClearance's equivalents were written independently against the
   same Blizzard 3.3.5a API surface. The 1-19 inventory slot walk with
@@ -45,13 +88,10 @@ Two other addons solve overlapping problems in the same niche:
   split, and the quiet-bulk-vs-chatty-reactive print pattern are all
   shapes the API itself forces; the code that implements them in EC
   uses different storage fields (`blacklistAuto` vs `whitelistText`),
-  different add helpers (`EC_AddItemToList` vs `AddLineIfMissing`),
-  and different print formatting, and EC carries v2.12.0 origin-tag
-  extensions (`"equipped"` / `"upgrade"`) that AutoDelete does not.
-  EC's `summonOnlyOutOfCombat` field is the polar opposite of
-  AutoDelete's `summonOnlyInCombat`: AutoDelete gates auto-summons
-  to fire only while in combat (farming-mode toggle); EC gates them
-  to fire only while out of combat (don't burn a GCD mid-rotation).
+  different add helpers, and different print formatting, and EC carries
+  origin-tag extensions (`"equipped"` / `"upgrade"`) that AutoDelete
+  does not. EC's out-of-combat summon gate is the polar opposite of
+  AutoDelete's in-combat-only summon toggle.
 
 - [AutoLoot](https://github.com/Veronica-Vasilieva/AutoLoot) (license
   per upstream repo) - smaller, blacklist-first auto-vendor with a
@@ -59,85 +99,51 @@ Two other addons solve overlapping problems in the same niche:
   Different scope and architecture from EC; no overlapping
   implementation patterns.
 
-The v2.39.0 version-update nudge follows a long-standing 3.3.5a pattern -
-broadcast your version on a group channel, have peers reply, and show a
-"newer version available" line once per session - long used by Auctionator
-and other addons of that era. EbonClearance's `NS.Comms` transport and the
-version check were written from scratch against `SendAddonMessage` /
-`CHAT_MSG_ADDON`; the one deliberate departure from the classic
-implementations is comparing parsed integers rather than raw version
-strings, which fixes the lexical-ordering bug (where "2.10.0" sorts below
-"2.9.0") those string comparisons carry.
+Upstream EbonClearance once shipped a version-update nudge on a group
+addon channel (v2.39.0), following a long-standing 3.3.5a pattern used
+by Auctionator and others. That transport (`NS.Comms` and related share
+modules) is **removed in this fork**.
 
 Cross-pollination of ideas in a small private-server addon ecosystem
 is normal and acknowledged. Where EbonClearance was inspired by an
 idea visible in another addon's behaviour, the implementation was
 written from scratch against the Blizzard API; verbatim code from
-another addon is not present in this codebase. Anyone wishing to
-verify can clone the EC repository and review the commit log
-alongside the cited competitor source.
+another addon is not present in this codebase.
 
 The acknowledgement runs both ways. AutoDelete's v3.20 README (May
 2026) includes a `Credits` section noting "AutoDelete has been
 re-implemented in part by EbonClearance" and "We appreciate the
-shoutouts in their source comments", reciprocating the source-comment
-mentions of AutoDelete that have been present in EC's code since the
-early `EbonholdStuff` fork. Both projects ship under their own
-licences (AutoDelete: MIT; EbonClearance: source-available attribution
-licence; see [`LICENSE`](LICENSE)) and both are written as original
-codebases against the shared Blizzard 3.3.5a API. Where a feature
-shape converges (e.g. a "Process Bags" panel grouping disenchant /
-mill / prospect / open under one window), the implementations are
-independent; the convergence reflects the small API surface and the
-specific gameplay loop both addons are solving for.
+shoutouts in their source comments", reciprocating early
+`EbonholdStuff`-era source-comment mentions. Both projects ship under
+their own licences (AutoDelete: MIT; EbonClearance: source-available
+attribution licence; see [`LICENSE`](LICENSE)).
 
 ---
 
-## Community contributions
+## Community contributions (upstream)
 
-Where players have shared modifications, prototypes, or companion
-addons that informed EC's design, the credit is recorded here.
+Where players have shared modifications or prototypes that informed
+upstream EC's design, the credit is recorded here. Some of the
+resulting features remain in this fork (affix debug trail, "already
+known" tooltip cue); others (for example the opt-in item-level
+overlay UI) were dropped with the Item Highlighting options panel and
+are dormant or absent here.
 
 **Ivo (v2.37.0).** Ivo shared his personally-modified EC fork plus a
-small standalone companion addon he wrote for his own use, and gave
-permission for the patterns to be adapted back into upstream. Three
-v2.37.0 features started from his work:
+small standalone companion addon and gave permission for the patterns
+to be adapted back into upstream. Three v2.37.0 features started from
+his work:
 
-- **Affix-pipeline event log.** The `AffixDebugDump` structured event
-  logger in `EbonClearance_Protection.lua`, with the six probe sites
-  along the affix-decision pipeline and the `/ec affixdebug` slash
-  sub-command, is adapted from Ivo's diagnostic prototype. The EC
-  implementation broadens the scope (account-wide flag, slash UX,
-  copyable dump window, `/ec bugreport` integration) but the core
-  shape - "log the affix pipeline's decisions to SavedVariables so a
-  player who hits a divergence can ship the structured trail" - is
-  his idea.
+- **Affix-pipeline event log** (`AffixDebugDump`, `/ec affixdebug`) -
+  still present.
+- **"Already known by this character" tooltip annotation** - still
+  present.
+- **Item-level overlay on equippable gear slots** - upstream shipped
+  an opt-in UI; this fork has no options panel for it and does not
+  expose the overlay as a player setting.
 
-- **"Already known by this character" tooltip annotation.** His
-  companion addon detected already-learned tomes / recipes via a
-  hidden tooltip scan for `ITEM_SPELL_KNOWN`. EC already had the
-  underlying detection (`tomeIsKnownCache`) for its protection rules;
-  Ivo's contribution is the idea of surfacing that detection as a
-  user-visible cue independent of the protection toggles. EC's
-  implementation uses the tooltip-annotation surface (allowed under
-  the project's "no icon overlays on bag items" rule) rather than
-  the icon-overlay form his prototype used.
-
-- **Item-level overlay on equippable gear slots.** Same idea, similar
-  rendering shape (quality-coloured text in the bottom-right corner
-  with the equipLoc whitelist filter). The EC implementation adds an
-  opt-in master toggle with three independently togglable surface
-  sub-toggles (bags / paperdoll / merchant) and a font-size slider,
-  ships the master toggle defaulting off so existing players pick up
-  no visual change without action, and narrows the project's prior
-  "no icon overlays" rule to allow informational text overlays gated
-  behind explicit player opt-in.
-
-Thanks Ivo. The companion addon he wrote was treated as inspiration
-only; no code from it was copied into EC verbatim, and the EC
-implementations were written against the same Blizzard 3.3.5a APIs
-that the prototype used. His prototype remains entirely his own work
-to ship or not, separate from EC's release schedule.
+Thanks Ivo. No code from his companion addon was copied into EC
+verbatim.
 
 ---
 
@@ -161,46 +167,47 @@ EbonClearance writes the following globals at addon load:
 ```
 EBONCLEARANCE_IDENT       = "EbonClearance"
 EBONCLEARANCE_AUTHOR      = "Serv"
-EBONCLEARANCE_ORIGIN      = "<canonical github url>"
-__EbonClearance_origin    = "<canonical github url>"
+EBONCLEARANCE_ORIGIN      = "<canonical upstream github url>"
+__EbonClearance_origin    = "<canonical upstream github url>"
 __EbonClearance_author    = "Serv"
 __EbonClearance_watermark = "<derived hex hash>"
 ```
 
-The `__<addon>_origin` / `__<addon>_author` form (double-underscore
-prefix, addon name, role suffix) is a pattern that has appeared in
-other 3.3.5a addons before this one. EbonClearance does not claim
-the pattern is original; it is deliberately compatible with
-something the broader scene is settling on for the same anti-rebrand
-reasons.
-
-The `__EbonClearance_watermark` global and the export-string
-fingerprint suffix (`;fp=<6 hex>`) are EbonClearance-specific. See
+The `__<addon>_origin` / `__<addon>_author` form is a pattern that has
+appeared in other 3.3.5a addons before this one. The
+`__EbonClearance_watermark` global and the export-string fingerprint
+suffix (`;fp=<6 hex>`) are EbonClearance-specific. See
 [`docs/ADDON_GUIDE.md`](docs/ADDON_GUIDE.md) "Fingerprint and
-watermark" section for the convention and how to verify the value.
+watermark" for verification. This fork keeps those upstream values;
+it does not replace them with the fork URL.
 
 ---
 
 ## Verifiable timeline
 
-EbonClearance has been on GitHub publicly since 2026-04-05 with full
-commit history visible at
-https://github.com/powerfulqa/EbonClearance. Anyone wishing to check
-which features shipped publicly when can clone the repository and
-review the commit log.
+Upstream EbonClearance has been on GitHub publicly since 2026-04-05
+with full commit history at
+https://github.com/powerfulqa/EbonClearance. This fork's history is at
+https://github.com/mturchik/EbonClearance. Anyone wishing to check
+which features shipped when can clone either repository and review the
+commit log.
 
 ---
 
 ## The honest summary
 
-- **Core gameplay loop**: developed independently with full public
-  commit history.
-- **Licence structure and provenance globals**: adopted patterns
-  that exist elsewhere in the 3.3.5a addon ecosystem with
-  acknowledgement (this file), not original to this project.
-- **Fingerprint and watermark mechanism**: specific to this project.
+- **This fork**: thinned Project Ebonhold build of Serv's EbonClearance;
+  scope documented in `docs/SCOPE_CUT.md`; maintained at
+  `mturchik/EbonClearance` with upstream attribution preserved.
+- **Core gameplay loop (summon / sell / lists)**: developed upstream
+  with public commit history; retained and adjusted here.
+- **Licence structure and provenance globals**: adopted patterns that
+  exist elsewhere in the 3.3.5a addon ecosystem with acknowledgement
+  (this file), not original to this project.
+- **Fingerprint and watermark mechanism**: specific to upstream
+  EbonClearance; unchanged in this fork.
 
-If you are reading this file in a derivative addon's source tree,
-that addon is required by EbonClearance's
-[LICENSE](LICENSE) to preserve this file in full and link to
+If you are reading this file in a further derivative's source tree,
+that tree is required by EbonClearance's [LICENSE](LICENSE) to preserve
+this file in full and to keep attribution to Serv and
 https://github.com/powerfulqa/EbonClearance.

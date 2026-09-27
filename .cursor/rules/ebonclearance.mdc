@@ -5,7 +5,7 @@ alwaysApply: true
 
 # EbonClearance
 
-WoW 3.3.5a addon (Interface 30300, Lua 5.1) for Project Ebonhold. No external libraries. Read `docs/ARCHITECTURE.md` for the file map, then `CLAUDE.md` and `docs/ADDON_GUIDE.md` before changing behaviour. `docs/plans/` and `docs/specs/` are historical; do not implement them unless asked. `docs/CODE_REVIEW.md` is a deferred backlog: cite items, do not redo them.
+WoW 3.3.5a addon (Interface 30300, Lua 5.1) for Project Ebonhold. No external libraries. Read `docs/ARCHITECTURE.md` for the file map, then `CLAUDE.md` and `docs/ADDON_GUIDE.md` before changing behaviour. Scope of the thin addon: `docs/SCOPE_CUT.md`.
 
 ## Do not break
 

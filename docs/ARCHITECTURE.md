@@ -3,15 +3,13 @@
 A bird's-eye map of where things live, for a contributor or AI agent landing
 in the repo. This is a map, not a manual: it tells you which file to open, not
 how every function works. For the deep reference (3.3.5a constraints, gotchas,
-refactoring traps, comms/guild-share internals) read
-[ADDON_GUIDE.md](ADDON_GUIDE.md). For deferred work, read
-[CODE_REVIEW.md](CODE_REVIEW.md).
+refactoring traps) read [ADDON_GUIDE.md](ADDON_GUIDE.md).
 
 EbonClearance is a WoW 3.3.5a (WotLK, Lua 5.1) bag manager focused on the
 companion summon loop, sell/keep/delete decisions, and the four lists. No
 external libraries; all Blizzard APIs. See [SCOPE_CUT.md](SCOPE_CUT.md) for
 what was removed. Trust [EbonClearance.toc](../EbonClearance.toc) for the live
-file list (23 `.lua` files after the feature cut).
+file list after the feature cut.
 
 ## How the files fit together
 
